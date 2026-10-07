@@ -9,7 +9,7 @@ TURZX 1CBE:0092 → Mac 的另一個 USB 接口。
 C4 與 Mac 之間全部走原本 JetLink USB。導航媒體在 Mac 內使用 127.0.0.1:47741 UDP IPC，不需要 Wi-Fi，也不是 C4 的 JetLink port。
 必要條件
 Apple Silicon Mac、macOS 15 以上、完整 Xcode（Swift 6.2 或更新）、Homebrew。若 Xcode 第一次開啟要求安裝元件或接受授權，先完成。你的 CarrotPilot 必須有 `carrot_hud_v1` sender。
-版本配對非常重要： 本版以你提供的 Carrot commit `a564ce1dc082909b1fdc73b72e64d920336b34d6` 與 JetLink `51ffd10825d9704f21293dc51d08244e8af86197` 為基準。兩者都是 protocol 2，已比對 header、message IDs、flags、推論封包 layout 與 USB padding 常數。最新 JetLink main/v0.8.3 是 protocol 3，不能直接拿來配這個 Carrot commit。不要只更改版本數字。
+版本配對非常重要： 本版以提供的 Carrot commit `a564ce1dc082909b1fdc73b72e64d920336b34d6` 與 JetLink `51ffd10825d9704f21293dc51d08244e8af86197` 為基準。兩者都是 protocol 2，已比對 header、message IDs、flags、推論封包 layout 與 USB padding 常數。最新 JetLink main/v0.8.3 是 protocol 3，不能直接拿來配這個 Carrot commit。不要只更改版本數字。
 在 Mac 安裝
 解壓縮 ZIP，放在 Downloads 或桌面。
 先確認 Homebrew 已安裝，Xcode 能正常開啟。
