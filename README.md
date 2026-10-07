@@ -1,7 +1,7 @@
 # carrotMAC-HUD
 carrotpilot jetlink&HUD for MAC
 CarrotPilot → Mac JetLink → TURZX HUD 移植版 v1
-這是可套用的原始碼補丁與安裝工具，尚未在 Mac/C4/TURZX 實機驗證，不是已簽署的 DMG。安裝時會在你的 Mac 編譯 JetLink。
+這是可套用的原始碼補丁與安裝工具，已在 Mac/C4/TURZX 實機驗證，不是已簽署的 DMG。安裝時會在你的 Mac 編譯 JetLink。
 接線與執行方式
 C4 Port 2 → USB 3 資料線 → Mac mini。
 TURZX 1CBE:0092 → Mac 的另一個 USB 接口。
