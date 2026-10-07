@@ -1,2 +1,2 @@
 # carrotMAC-HUD
-carrotpilot jetlinK&HUD for MAC
+carrotpilot jetlink&HUD for MAC
