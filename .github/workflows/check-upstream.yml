@@ -1,6 +1,15 @@
 name: Check official JetLink updates
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'versions.json'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'v1/**'
+      - 'AppAutostart/**'
+      - '.github/workflows/check-upstream.yml'
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -30,8 +39,16 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Prepare official source with HUD patches
         env:
-          UPSTREAM_REF: ${{ inputs.upstream_ref || 'main' }}
-        run: python3 scripts/prepare_upstream.py --ref "$UPSTREAM_REF"
+          UPSTREAM_REF: ${{ inputs.upstream_ref || '' }}
+        run: |
+          if [[ -z "$UPSTREAM_REF" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == 'push' ]]; then
+              UPSTREAM_REF="$(python3 -c 'import json; print(json.load(open("versions.json"))["jetlink_revision"])')"
+            else
+              UPSTREAM_REF=main
+            fi
+          fi
+          python3 scripts/prepare_upstream.py --ref "$UPSTREAM_REF"
       - name: Record compatibility result
         id: report
         run: |
