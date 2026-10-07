@@ -80,16 +80,16 @@ jobs:
   build:
     needs: prepare
     if: needs.prepare.outputs.ready == 'true'
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: candidate-source
       - run: tar -xzf candidate-source.tar.gz
-      - name: Select Xcode 26.3 and install xcodegen
+      - name: Select Xcode 26.6 and install xcodegen
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
           xcodebuild -version
           brew install xcodegen
       - name: Verify HUD Swift tests on Apple Silicon target
