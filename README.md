@@ -1,4 +1,54 @@
 # carrotMAC-HUD
+
+CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始碼補丁、Mac 更新腳本與官方更新檢查，不需要另外建立名為 jetlink 的 Fork。
+
+## 目前可用配對
+
+- JetLink：`51ffd10825d9704f21293dc51d08244e8af86197`
+- Carrot helper：`a564ce1dc082909b1fdc73b72e64d920336b34d6`
+- 通訊協定：**protocol 2**，版本記錄於 [versions.json](versions.json)。
+- 使用者已確認 v1 在 Mac/C4/TURZX 有畫面；新增 App 自動啟動與雲端編譯流程仍需驗證。
+- 官方目前使用 protocol 3，**尚未適配**。更新檢查遇到差異會 blocked，保留以上版本；不是修改協定數字就能相容。
+
+## 已裝過 v1：更新 App 與 HUD
+
+1. Windows 或 Mac 都可在本頁選 **Code → Download ZIP**，解壓縮。
+2. 在 **Mac** 退出 JetLink，停止舊 `02-Start.command` 視窗中的 helper。
+3. 執行根目錄 **03-Update.command**。它會抓本 repository 的 main，再依 versions.json 下載官方固定版本、套用 HUD 和 App 啟動補丁、執行 Swift HUD 測試並编譯。
+4. 成功後才替換原本 `~/CarrotMacHUD/jetlink/macos/build/Jetlink.app`，並備份 App/helper。之後直接點修改版 App；保持 **Start server on launch** 開啟。
+5. 需要還原時，在退出 App 後執行 **04-Rollback.command**。
+
+保留 Xcode、Homebrew 與現有 Python HUD 環境。此流程不更新 C4，不更換模型；C4 與 Mac 的實際通訊版本仍須配對。來源與備份會留在 ~/CarrotMacHUD，請管理磁碟空間。
+
+第一次安裝可執行 [v1/01-Install.command](v1/01-Install.command)，再執行根目錄 03-Update.command。
+[AppAutostart](AppAutostart) 保留獨立啟動整合補丁；原本 ZIP 也保留。
+
+## 在 Windows 網頁檢查官方更新
+
+打開 **Actions → Check official JetLink updates → Run workflow**：
+
+- `upstream_ref = main`：檢查官方最新版。
+- 填入 versions.json 的 JetLink SHA：驗證目前固定版的補丁與 Mac 編譯。
+- 每天也會檢查官方 main，結果與原因在 workflow Summary 與 compatibility-report artifact。
+- 檢查不相容時標示 **Update blocked; current version retained**。這表示檢查完成，**不是已同步**；Mac build 會跳過。
+- 協定及補丁通過才在 GitHub 的 Apple Silicon Mac runner 編譯、簽名驗證，產生 **Jetlink-HUD-candidate** artifact。ZIP 是 ad hoc 簽名的候選 App，未公證，並且需要本機 HUD Python 環境；不能當成正式實機驗收。
+- 候選基準和現有版本不同時會提出更新 versions.json 的 PR；**不自動合併**。先驗證 C4 模型、TURZX 畫面與退出清理，再合併，Mac 執行 03-Update.command 才安裝。
+
+若 Actions 尚未允許執行，按 GitHub 顯示的啟用按鈕。若建立 PR 被 repository 政策擋下，檢查 **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**；不需設定 PAT 或把密碼寫進程式碼。若你想保留禁用設定，也可自行提交 versions.json 更新。
+
+## 維護方式
+
+HUD 傳輸補丁在 v1/jetlink-mac-hud.patch；App 啟動補丁在 AppAutostart/jetlink-autostart.patch；
+helper 原始碼在 AppAutostart/mac_hud_supervisor.py。官方更新導致衝突時，需要先修補這些差異並更新測試。
+這是「官方原始碼＋HUD overlay」流程，保留原始碼歷史與目前安裝，不會強制 reset 你的 Mac checkout。
+
+本次新增的相容性檢查、更新/還原配對與補丁套用已在 Linux 驗證。Mac Swift 編譯由 Actions 或你的 Mac 執行，尚未宣稱通過；C4/TURZX 新版實機測試仍需完成。
+授權沿用各 upstream；本 repository 不包含模型權重。
+
+<details>
+<summary>原本 v1 說明（保留歷史，啟動與更新方式請以以上為準）</summary>
+
+# carrotMAC-HUD
 carrotpilot jetlink&HUD for MAC
 CarrotPilot → Mac JetLink → TURZX HUD 移植版 v1
 這是可套用的原始碼補丁與安裝工具，已在 Mac/C4/TURZX 實機驗證，不是已簽署的 DMG。安裝時會在你的 Mac 編譯 JetLink。
@@ -54,3 +104,6 @@ Carrot helper 全部依賴安裝後的 `--help` import/CLI 載入通過；腳本
 https://github.com/ajouatom/openpilot/commit/a564ce1dc082909b1fdc73b72e64d920336b34d6
 https://github.com/zoompilot/jetlink/commit/51ffd10825d9704f21293dc51d08244e8af86197
 補丁套用後的原始碼仍依各 upstream 專案的授權；安裝工具沒有攜帶模型權重。
+
+</details>
+

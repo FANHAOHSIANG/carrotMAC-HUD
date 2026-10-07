@@ -1,0 +1,319 @@
+diff --git a/tools/jetlink/hud.py b/tools/jetlink/hud.py
+index 85686cc..8aa7ad9 100644
+--- a/tools/jetlink/hud.py
++++ b/tools/jetlink/hud.py
+@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
+ sys.path.insert(0, str(ROOT))
+ sys.path.insert(0, str(ROOT / 'openpilot/selfdrive/carrot/cluster'))
+ from hud_protocol import read_snapshot, SERVICES
++from hud_runtime import MAC, DIRECTORY, STATUS
+ 
+ 
+ def require_usb_display(scan, expected):
+@@ -74,7 +75,13 @@ class DisplayParams:
+ 
+   def put_bool_nonblocking(self, key, value):
+     if key == 'ClusterHudConnected':
+-      Path('/dev/shm/carrot-jetlink-hud-connected').write_text(str(bool(value)))
++      if MAC:
++        # Output heartbeat, refreshed by successful frame writes, confirms
++        # activity. A disconnected or stopped helper must expire on the C4.
++        if not value:
++          STATUS.unlink(missing_ok=True)
++      else:
++        Path('/dev/shm/carrot-jetlink-hud-connected').write_text(str(bool(value)))
+ 
+ 
+ class RemoteSubMaster:
+@@ -128,6 +135,8 @@ class RemoteSubMaster:
+ 
+ 
+ def main():
++  if MAC:
++    DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
+   if '--help' not in sys.argv:
+     settings = DisplayParams()
+     while not (settings.get_int('ClusterHud') == 1 and
+@@ -184,8 +193,10 @@ def main():
+   cluster_navi_source.NaviIpcMediaSource = RemoteNaviSource
+   vehicle_stats = VehicleSystemStats()
+   import main as cluster
+-  from hud_health import HealthRenderer
+-  cluster.ClusterUiRenderer = HealthRenderer
++  if not MAC:
++    # Jetson sysfs temperatures and limits have no meaning on a Mac.
++    from hud_health import HealthRenderer
++    cluster.ClusterUiRenderer = HealthRenderer
+   if '--help' not in sys.argv:
+     scan = cluster.find_supported_usb_product
+     wait_for_usb_display(scan, cluster.product_id_for_hud_mode(1))
+@@ -200,10 +211,11 @@ def main():
+       result = super().send_h264_chunk(*args, **kwargs)
+       now = time.monotonic()
+       if now >= self.next_status:
+-        path = Path('/dev/shm/carrot-jetlink-hud-status.json')
++        path = STATUS
+         tmp = path.with_suffix('.tmp')
+         stats = vehicle_stats.sample()
+-        tmp.write_text(json.dumps({'updated': now, **display_metrics,
++        tmp.write_text(json.dumps({'updated': now, 'updated_epoch': time.time(),
++                                  'connected': True, **display_metrics,
+                                   'vehicle_network_address': VehicleNetworkAddress().address(),
+                                   'vehicle_cpu': stats.cpu_core_percents,
+                                   'vehicle_memory_percent': stats.memory_used_percent}))
+@@ -219,9 +231,20 @@ def main():
+   if '--help' in sys.argv:
+     cluster.main()
+   else:
+-    from display_owner import panel_owner
+-    with panel_owner(hud=True):
+-      cluster.main()
++    if MAC:
++      import fcntl
++      DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
++      with (DIRECTORY / 'panel.lock').open('a') as lock:
++        # Only this helper owns TURZX. JetLink alone owns the C4 USB transport.
++        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        try:
++          cluster.main()
++        finally:
++          STATUS.unlink(missing_ok=True)
++    else:
++      from display_owner import panel_owner
++      with panel_owner(hud=True):
++        cluster.main()
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/tools/jetlink/hud_navi.py b/tools/jetlink/hud_navi.py
+index f48f6a5..53d6ea4 100644
+--- a/tools/jetlink/hud_navi.py
++++ b/tools/jetlink/hud_navi.py
+@@ -11,7 +11,7 @@ from dataclasses import replace
+ CAPABILITY = 'carrot_navi_v1'
+ PUMP_CAPABILITY = 'carrot_navi_pump_v1'
+ MESSAGE = 0x4001
+-ADDRESS = '\0carrot-jetlink-navi'
++from hud_runtime import MAC, NAVI_ADDRESS as ADDRESS
+ HEADER = struct.Struct('<QQII')  # Publisher epoch, event id, offset, event length.
+ CHUNK = 32 * 1024
+ MAX_EVENT = 1024 * 1024
+@@ -155,7 +155,7 @@ class Assembler:
+ 
+ class HostForwarder:
+   def __init__(self):
+-    self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
++    self.sock = socket.socket(socket.AF_INET if MAC else socket.AF_UNIX, socket.SOCK_DGRAM)
+     self.sock.setblocking(False)
+ 
+   def send(self, packet):
+@@ -171,7 +171,7 @@ class HostForwarder:
+ 
+ class RemoteMediaSocket:
+   def __init__(self):
+-    self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
++    self.sock = socket.socket(socket.AF_INET if MAC else socket.AF_UNIX, socket.SOCK_DGRAM)
+     self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+     self.sock.bind(ADDRESS)
+     self.sock.setblocking(False)
+diff --git a/tools/jetlink/hud_protocol.py b/tools/jetlink/hud_protocol.py
+index d85299a..ebb5451 100644
+--- a/tools/jetlink/hud_protocol.py
++++ b/tools/jetlink/hud_protocol.py
+@@ -11,7 +11,7 @@ import time
+ HUD_MESSAGE = 0x4000
+ HUD_CAPABILITY = 'carrot_hud_v1'
+ MAX_HUD_BYTES = 512 * 1024
+-HUD_PACKET = Path('/dev/shm/carrot-jetlink-hud.packet')
++from hud_runtime import MAC, PACKET as HUD_PACKET
+ HEADER = struct.Struct('<d')
+ SERVICES = ('carState', 'carParams', 'modelV2', 'radarState', 'liveTracks', 'longitudinalPlan',
+             'lateralPlan', 'controlsState', 'selfdriveState', 'carControl', 'carOutput', 'deviceState',
+@@ -115,7 +115,7 @@ class SnapshotBuilder:
+     now = time.monotonic()
+     link = _fresh(LINK_STATUS, now)
+     try:
+-      host_display = (host_label(link.get('peer')) == 'jetSON' and
++      host_display = (host_label(link.get('peer')) in ('jetSON', 'MAC') and
+                       0 <= now - float(link['telemetry_updated']) < 3 and
+                       link['telemetry'].get('carrot_hud_connected') is True)
+     except (KeyError, TypeError, ValueError):
+@@ -193,12 +193,18 @@ def read_snapshot():
+     if len(data) > MAX_HUD_BYTES + HEADER.size:
+       return None
+     received, = HEADER.unpack_from(data)
+-    if not 0 <= time.monotonic() - received < .5:
++    # Swift uses epoch seconds on Mac, avoiding different monotonic clock
++    # definitions across languages and sleep. Export a local monotonic stamp
++    # to the renderer's existing timestamp translation logic.
++    age = (time.time() if MAC else time.monotonic()) - received
++    if not 0 <= age < .5:
+       return None
++    if MAC:
++      received = now - age
+     value = json.loads(data[HEADER.size:])
+     if value.get('version') == 1:
+       _cached_snapshot = received, value
+       return _cached_snapshot
+-  except (OSError, ValueError, struct.error):
++  except (OSError, ValueError, TypeError, AttributeError, struct.error):
+     pass
+   return None
+diff --git a/tools/jetlink/hud_runtime.py b/tools/jetlink/hud_runtime.py
+new file mode 100644
+index 0000000..3abc6c2
+--- /dev/null
++++ b/tools/jetlink/hud_runtime.py
+@@ -0,0 +1,12 @@
++"""Host-only paths; Linux retains the original Jetson locations."""
++import os
++from pathlib import Path
++import sys
++
++MAC = sys.platform == 'darwin'
++DIRECTORY = (Path(os.environ.get('CARROT_HUD_DIR',
++  str(Path.home() / 'Library/Caches/io.zoompilot.jetlink/carrot-hud')))
++  if MAC else Path('/dev/shm'))
++PACKET = DIRECTORY / ('snapshot.packet' if MAC else 'carrot-jetlink-hud.packet')
++STATUS = DIRECTORY / ('status.json' if MAC else 'carrot-jetlink-hud-status.json')
++NAVI_ADDRESS = ('127.0.0.1', 47741) if MAC else '\0carrot-jetlink-navi'
+diff --git a/tools/jetlink/run_mac_hud.sh b/tools/jetlink/run_mac_hud.sh
+new file mode 100755
+index 0000000..c9c5734
+--- /dev/null
++++ b/tools/jetlink/run_mac_hud.sh
+@@ -0,0 +1,22 @@
++#!/usr/bin/env bash
++set -euo pipefail
++trap 'exit 130' INT
++trap 'exit 143' TERM
++ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
++RUNTIME="$ROOT/.mac-hud-venv"
++if [[ "$(uname -s)" != Darwin ]]; then
++  echo 'This launcher requires macOS.' >&2
++  exit 1
++fi
++if [[ ! -x "$RUNTIME/bin/python" ]]; then
++  echo 'Run tools/jetlink/setup_mac_hud.sh first.' >&2
++  exit 1
++fi
++export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
++# Homebrew is often missing from a Finder-launched app's PATH.
++export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
++while true; do
++  "$RUNTIME/bin/python" "$ROOT/tools/jetlink/hud.py" "$@" && exit 0
++  echo 'HUD stopped; retrying in 2 seconds. Ctrl-C stops this helper.' >&2
++  sleep 2
++done
+diff --git a/tools/jetlink/setup_mac_hud.sh b/tools/jetlink/setup_mac_hud.sh
+new file mode 100755
+index 0000000..c212c8c
+--- /dev/null
++++ b/tools/jetlink/setup_mac_hud.sh
+@@ -0,0 +1,15 @@
++#!/usr/bin/env bash
++set -euo pipefail
++ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
++[[ "$(uname -s)" == Darwin ]] || { echo 'macOS required' >&2; exit 1; }
++command -v brew >/dev/null || { echo 'Install Homebrew first: https://brew.sh' >&2; exit 1; }
++brew install python@3.12 libusb ffmpeg
++# Only schema files from the pinned submodule are needed; no device binaries.
++git -C "$ROOT" submodule update --init --depth 1 opendbc_repo
++"$(brew --prefix python@3.12)/bin/python3.12" -m venv "$ROOT/.mac-hud-venv"
++"$ROOT/.mac-hud-venv/bin/python" -m pip install --upgrade pip
++"$ROOT/.mac-hud-venv/bin/python" -m pip install 'numpy>=1.26,<3' \
++  -r "$ROOT/openpilot/selfdrive/carrot/cluster/requirements.txt"
++export PYTHONPATH="$ROOT"
++"$ROOT/.mac-hud-venv/bin/python" "$ROOT/tools/jetlink/hud.py" --help >/dev/null
++echo 'HUD dependencies ready. Run tools/jetlink/run_mac_hud.sh.'
+diff --git a/tools/jetlink/test_hotplug_resources.py b/tools/jetlink/test_hotplug_resources.py
+index 3412c56..3f3898e 100644
+--- a/tools/jetlink/test_hotplug_resources.py
++++ b/tools/jetlink/test_hotplug_resources.py
+@@ -151,12 +151,13 @@ def test_preview_worker_follows_display_lifetime(monkeypatch):
+   assert builder.camera_previews() == {} and len(closed) == 2
+ 
+ 
+-def test_jetson_panel_heartbeat_enables_preview_with_vehicle_switch_off(monkeypatch):
++@pytest.mark.parametrize('host', ['jetson', 'mac'])
++def test_jetson_panel_heartbeat_enables_preview_with_vehicle_switch_off(monkeypatch, host):
+   import hud_protocol
+   import hud_camera
+   from openpilot.common import jetlink_status
+   created, closed = [], []
+-  record = {'updated': 20., 'telemetry_updated': 20., 'peer': {'carrot_host': 'jetson'},
++  record = {'updated': 20., 'telemetry_updated': 20., 'peer': {'carrot_host': host},
+             'telemetry': {'carrot_hud_connected': True}}
+   monkeypatch.setattr(jetlink_status, '_fresh', lambda *a: record)
+   monkeypatch.setattr(hud_protocol.time, 'monotonic', lambda: 20.)
+diff --git a/tools/jetlink/test_mac_hud.py b/tools/jetlink/test_mac_hud.py
+new file mode 100644
+index 0000000..338da5b
+--- /dev/null
++++ b/tools/jetlink/test_mac_hud.py
+@@ -0,0 +1,65 @@
++"""Portable tests of the Mac clock and IPC adapters (no USB hardware)."""
++import json
++from pathlib import Path
++import socket
++import sys
++import time
++
++import pytest
++
++sys.path.insert(0, str(Path(__file__).parent))
++import hud_protocol as protocol
++import hud_navi as navi
++
++
++@pytest.mark.parametrize('age,valid', [(0.1, True), (0.499, True), (0.5, False), (5., False), (-1., False)])
++def test_epoch_clock_translation_and_expiry(tmp_path, monkeypatch, age, valid):
++  packet = tmp_path / 'snapshot.packet'
++  packet.write_bytes(protocol.HEADER.pack(1000. - age) + json.dumps({'version': 1}).encode())
++  monkeypatch.setattr(protocol, 'MAC', True)
++  monkeypatch.setattr(protocol, 'HUD_PACKET', packet)
++  monkeypatch.setattr(protocol, '_next_snapshot_read', 0.)
++  monkeypatch.setattr(protocol.time, 'time', lambda: 1000.)
++  monkeypatch.setattr(protocol.time, 'monotonic', lambda: 50.)
++  result = protocol.read_snapshot()
++  assert (result is not None) == valid
++  if valid:
++    assert result[0] == pytest.approx(50. - age)
++
++
++def test_mac_loopback_delivers_full_navigation_fragments(monkeypatch):
++  # macOS cannot use Linux's abstract AF_UNIX address. Exercise the actual
++  # replacement UDP transport with the existing ordered reassembler.
++  monkeypatch.setattr(navi, 'MAC', True)
++  monkeypatch.setattr(navi, 'ADDRESS', ('127.0.0.1', 0))
++  receiver = navi.RemoteMediaSocket()
++  monkeypatch.setattr(navi, 'ADDRESS', receiver.sock.getsockname())
++  forwarder = navi.HostForwarder()
++  raw = bytes(range(256)) * 300
++  try:
++    complete = None
++    for fragment in navi.fragments(raw, 1, 2):
++      forwarder.send(fragment)
++      receiver.sock.settimeout(1)
++      complete = receiver.assembler.feed(receiver.sock.recv(navi.CHUNK + navi.HEADER.size + 1), time.monotonic())
++    assert complete == (1, 2, raw)
++  finally:
++    forwarder.close()
++    receiver.close()
++
++
++def test_missing_navigation_fragment_never_yields_partial_event():
++  assembler = navi.Assembler()
++  fragments = list(navi.fragments(b'x' * 100000, 1, 2))
++  assert assembler.feed(fragments[0], 1.) is None
++  assert assembler.feed(fragments[2], 1.1) is None
++  assert assembler.feed(fragments[3], 1.2) is None
++
++
++def test_disconnect_invalidates_all_vehicle_services(monkeypatch):
++  import hud
++  master = hud.RemoteSubMaster(['carState'])
++  master.valid['carState'] = master.alive['carState'] = True
++  monkeypatch.setattr(hud, 'read_snapshot', lambda: None)
++  master.update()
++  assert not master.valid['carState'] and not master.alive['carState']

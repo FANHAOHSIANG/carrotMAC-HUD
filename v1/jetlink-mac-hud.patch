@@ -1,0 +1,284 @@
+diff --git a/JetlinkKit/Sources/JetlinkServer/CarrotHUD.swift b/JetlinkKit/Sources/JetlinkServer/CarrotHUD.swift
+new file mode 100644
+index 0000000..6485b36
+--- /dev/null
++++ b/JetlinkKit/Sources/JetlinkServer/CarrotHUD.swift
+@@ -0,0 +1,128 @@
++#if os(macOS)
++import Foundation
++import Darwin
++
++/// Optional display-only Carrot extension. One pending snapshot, never a FIFO
++/// of disk writes. No acknowledgement: Carrot sends these between model RPCs.
++final class CarrotHUD: @unchecked Sendable {
++  static let shared = CarrotHUD()
++  static let hudType: UInt16 = 0x4000
++  static let naviType: UInt16 = 0x4001
++  static let maxBytes = 512 * 1024
++  static let directory: URL = {
++    if let path = ProcessInfo.processInfo.environment["CARROT_HUD_DIR"] {
++      return URL(fileURLWithPath: path, isDirectory: true)
++    }
++    return FileManager.default.homeDirectoryForCurrentUser
++      .appendingPathComponent("Library/Caches/io.zoompilot.jetlink/carrot-hud", isDirectory: true)
++  }()
++
++  private let condition = NSCondition()
++  private var owner: UUID?
++  private var pending: (UUID, Double, Data)?
++  private let udp: Int32
++  private let log = ServerLog(category: "carrot-hud")
++
++  private init() {
++    udp = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
++    if udp >= 0 { _ = fcntl(udp, F_SETFL, O_NONBLOCK) }
++    let thread = Thread { [self] in run() }
++    thread.name = "carrot-hud-writer"
++    thread.qualityOfService = .utility
++    thread.start()
++  }
++
++  func claim(_ id: UUID) -> Bool {
++    condition.lock()
++    defer { condition.unlock() }
++    guard owner == nil || owner == id else { return false }
++    owner = id
++    pending = nil
++    return true
++  }
++
++  func release(_ id: UUID) {
++    condition.lock()
++    if owner == id { owner = nil; pending = nil }
++    condition.unlock()
++    // Snapshot age expires in 0.5s even if an in-flight write just finished.
++  }
++
++  func accept(_ payload: UnsafeRawBufferPointer, owner id: UUID) {
++    guard !payload.isEmpty, payload.count <= Self.maxBytes else { return }
++    let stamp = Date().timeIntervalSince1970
++    let copy = Data(payload)
++    condition.lock()
++    if owner == id {
++      pending = (id, stamp, copy)
++      condition.signal()
++    }
++    condition.unlock()
++  }
++
++  func forward(_ payload: UnsafeRawBufferPointer, owner id: UUID) {
++    guard udp >= 0, payload.count > 24, payload.count <= 24 + 32 * 1024 else { return }
++    condition.lock()
++    let allowed = owner == id
++    condition.unlock()
++    guard allowed else { return }
++    // Loopback IPC only: macOS has no Linux abstract Unix socket namespace.
++    var address = sockaddr_in()
++    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
++    address.sin_family = sa_family_t(AF_INET)
++    address.sin_port = UInt16(47741).bigEndian
++    address.sin_addr.s_addr = inet_addr("127.0.0.1")
++    withUnsafePointer(to: &address) { pointer in
++      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
++        _ = Darwin.sendto(udp, payload.baseAddress, payload.count, 0, $0,
++                          socklen_t(MemoryLayout<sockaddr_in>.size))
++      }
++    }
++  }
++
++  /// Called only by the telemetry worker, never on the inference thread.
++  static func telemetry() -> [String: Any] {
++    let path = directory.appendingPathComponent("status.json")
++    guard let bytes = try? Data(contentsOf: path), bytes.count <= 4096,
++          let record = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
++          let updated = record["updated_epoch"] as? Double,
++          (0..<3).contains(Date().timeIntervalSince1970 - updated),
++          record["connected"] as? Bool == true else {
++      return ["carrot_hud_connected": false]
++    }
++    return ["carrot_hud_connected": true]
++  }
++
++  private func run() {
++    var nextError = 0.0
++    while true {
++      condition.lock()
++      while pending == nil { condition.wait() }
++      let (id, received, payload) = pending!
++      pending = nil
++      let allowed = owner == id
++      condition.unlock()
++      guard allowed, (0..<0.5).contains(Date().timeIntervalSince1970 - received) else { continue }
++      do {
++        guard let record = try JSONSerialization.jsonObject(with: payload) as? [String: Any],
++              record["version"] as? Int == 1,
++              record["sent"] is NSNumber,
++              ["events", "params", "valid", "alive", "received", "mono"].allSatisfy({ record[$0] is [String: Any] }) else { continue }
++        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true,
++                                                attributes: [.posixPermissions: 0o700])
++        var stamp = received.bitPattern.littleEndian
++        var packet = Data()
++        withUnsafeBytes(of: &stamp) { packet.append(contentsOf: $0) }
++        packet.append(payload)
++        try packet.write(to: Self.directory.appendingPathComponent("snapshot.packet"), options: .atomic)
++      } catch {
++        let now = Date().timeIntervalSince1970
++        if now >= nextError {
++          log.error("HUD snapshot write failed: \(error)")
++          nextError = now + 5
++        }
++      }
++    }
++  }
++}
++#endif
+diff --git a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
+index 2fc7728..19356b3 100644
+--- a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
++++ b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
+@@ -102,10 +102,26 @@ public final class EngineHost: @unchecked Sendable {
+ 
+   /// The host's telemetry, thermal state, sleep and power: `ServerHooks`.
+   let hooks: ServerHooks
++  #if os(macOS)
++  private let carrotTelemetry: TelemetrySampler
++  #endif
+ 
+   public init(cache: ServerCache, hooks: ServerHooks = ServerHooks()) {
+     self.cache = cache
++    #if os(macOS)
++    let source = hooks.telemetry
++    let sampler = TelemetrySampler {
++      var sample = source()
++      for (key, value) in CarrotHUD.telemetry() { sample[key] = value }
++      return sample
++    }
++    carrotTelemetry = sampler
++    var adapted = hooks
++    adapted.telemetry = { sampler.read() }
++    self.hooks = adapted
++    #else
+     self.hooks = hooks
++    #endif
+   }
+ 
+   var backend: any EngineBackend { cache.backend }
+@@ -431,6 +447,9 @@ public final class EngineHost: @unchecked Sendable {
+   }
+ 
+   public func close() {
++    #if os(macOS)
++    carrotTelemetry.close()
++    #endif
+     unload()
+   }
+ 
+diff --git a/JetlinkKit/Sources/JetlinkServer/Session.swift b/JetlinkKit/Sources/JetlinkServer/Session.swift
+index 6cd15e6..5e53e8c 100644
+--- a/JetlinkKit/Sources/JetlinkServer/Session.swift
++++ b/JetlinkKit/Sources/JetlinkServer/Session.swift
+@@ -7,6 +7,11 @@ import JetlinkRegistry
+ /// thread so progress keeps flowing. The inference path neither allocates
+ /// nor logs on the way to the reply.
+ final class Session: @unchecked Sendable {
++  #if os(macOS)
++  private let carrotHUDOwner = UUID()
++  private var carrotHUDEnabled = false
++  #endif
++
+   private let transport: any MessageLink
+   private let host: EngineHost
+   private let log = ServerLog(category: "session")
+@@ -80,6 +85,9 @@ final class Session: @unchecked Sendable {
+ 
+   /// The connection is gone. The engine stays.
+   func close() {
++    #if os(macOS)
++    CarrotHUD.shared.release(carrotHUDOwner)
++    #endif
+     host.lock.lock()
+     if host.session === self {
+       host.session = nil
+@@ -139,6 +147,18 @@ final class Session: @unchecked Sendable {
+   }
+ 
+   func handle(_ message: Message) throws {
++    #if os(macOS)
++    if message.msgType == CarrotHUD.hudType || message.msgType == CarrotHUD.naviType {
++      guard carrotHUDEnabled, message.seq > lastSeq else { return }
++      lastSeq = message.seq
++      if message.msgType == CarrotHUD.hudType {
++        CarrotHUD.shared.accept(message.payload, owner: carrotHUDOwner)
++      } else {
++        CarrotHUD.shared.forward(message.payload, owner: carrotHUDOwner)
++      }
++      return
++    }
++    #endif
+     guard let type = Wire.Msg(rawValue: message.msgType) else {
+       try error(message.seq, "unknown_message", "type \(message.msgType)")
+       return
+@@ -215,6 +235,12 @@ final class Session: @unchecked Sendable {
+     for (key, value) in host.backend.helloFields {
+       response[key] = value
+     }
++    #if os(macOS)
++    carrotHUDEnabled = CarrotHUD.shared.claim(carrotHUDOwner)
++    response["carrot_hud_v1"] = carrotHUDEnabled
++    response["carrot_navi_v1"] = carrotHUDEnabled
++    response["carrot_host"] = "mac"
++    #endif
+     try sendJSON(.helloResp, seq: message.seq, response)
+   }
+ 
+diff --git a/JetlinkKit/Tests/JetlinkServerTests/CarrotHUDTests.swift b/JetlinkKit/Tests/JetlinkServerTests/CarrotHUDTests.swift
+new file mode 100644
+index 0000000..be41931
+--- /dev/null
++++ b/JetlinkKit/Tests/JetlinkServerTests/CarrotHUDTests.swift
+@@ -0,0 +1,45 @@
++#if os(macOS)
++import Foundation
++import Darwin
++import Testing
++@testable import JetlinkServer
++
++@Suite("Carrot display extension", .serialized)
++struct CarrotHUDTests {
++  @Test("Snapshot is little-endian epoch + JSON; last sample is bounded and fresh")
++  func packet() throws {
++    let bridge = CarrotHUD.shared
++    let id = UUID()
++    #expect(bridge.claim(id))
++    defer { bridge.release(id) }
++    let path = CarrotHUD.directory.appendingPathComponent("snapshot.packet")
++    try? FileManager.default.removeItem(at: path)
++    let payload = try JSONSerialization.data(withJSONObject: [
++      "version": 1, "sent": 10.0, "events": [:], "params": [:],
++      "valid": [:], "alive": [:], "received": [:], "mono": [:],
++    ] as [String: Any])
++    payload.withUnsafeBytes { bridge.accept($0, owner: id) }
++    let deadline = Date().addingTimeInterval(2)
++    while !FileManager.default.fileExists(atPath: path.path), Date() < deadline {
++      Thread.sleep(forTimeInterval: 0.01)
++    }
++    let bytes = try Data(contentsOf: path)
++    let bits = bytes.withUnsafeBytes { UInt64(littleEndian: $0.loadUnaligned(as: UInt64.self)) }
++    #expect(abs(Date().timeIntervalSince1970 - Double(bitPattern: bits)) < 2)
++    #expect(bytes.dropFirst(8) == payload)
++    #expect(!bridge.claim(UUID()))
++  }
++
++  @Test("Stale or disconnected helper cannot claim a connected display")
++  func telemetry() throws {
++    let path = CarrotHUD.directory.appendingPathComponent("status.json")
++    try FileManager.default.createDirectory(at: CarrotHUD.directory, withIntermediateDirectories: true)
++    defer { try? FileManager.default.removeItem(at: path) }
++    for (age, connected, expected) in [(0.1, true, true), (4.0, true, false), (0.1, false, false)] {
++      let bytes = try JSONSerialization.data(withJSONObject: ["updated_epoch": Date().timeIntervalSince1970 - age, "connected": connected])
++      try bytes.write(to: path, options: .atomic)
++      #expect(CarrotHUD.telemetry()["carrot_hud_connected"] as? Bool == expected)
++    }
++  }
++}
++#endif

@@ -1,0 +1,128 @@
+name: Check official JetLink updates
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'Official branch/tag/SHA; main checks the newest version'
+        required: true
+        default: main
+        type: string
+  schedule:
+    - cron: '20 2 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-official-jetlink
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.report.outputs.ready }}
+      sha: ${{ steps.report.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test compatibility guard
+        run: python3 -m unittest discover -s tests -v
+      - name: Prepare official source with HUD patches
+        env:
+          UPSTREAM_REF: ${{ inputs.upstream_ref || 'main' }}
+        run: python3 scripts/prepare_upstream.py --ref "$UPSTREAM_REF"
+      - name: Record compatibility result
+        id: report
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads(Path('upstream-report.json').read_text())
+          ready = report['status'] == 'ready'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              print(f'ready={str(ready).lower()}', file=f)
+              print('sha=' + (report['versions']['jetlink_revision'] if ready else ''), file=f)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              print('## ' + ('Candidate ready for build' if ready else 'Update blocked; current version retained'), file=f)
+              print(report['message'], file=f)
+          PY
+      - name: Package candidate source
+        if: steps.report.outputs.ready == 'true'
+        run: tar -czf candidate-source.tar.gz candidate-jetlink candidate-versions.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-report
+          path: upstream-report.json
+      - uses: actions/upload-artifact@v4
+        if: steps.report.outputs.ready == 'true'
+        with:
+          name: candidate-source
+          path: candidate-source.tar.gz
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-source
+      - run: tar -xzf candidate-source.tar.gz
+      - name: Select Xcode 26.3 and install xcodegen
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          xcodebuild -version
+          brew install xcodegen
+      - name: Verify HUD Swift tests on Apple Silicon target
+        env:
+          CARROT_HUD_DIR: ${{ runner.temp }}/carrot-hud-tests
+        run: |
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter CarrotHUDTests
+      - name: Build and verify App
+        run: |
+          make -C candidate-jetlink/macos app
+          codesign --verify --deep --strict candidate-jetlink/macos/build/Jetlink.app
+          ditto -c -k --sequesterRsrc --keepParent candidate-jetlink/macos/build/Jetlink.app Jetlink-HUD-candidate.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jetlink-HUD-candidate
+          path: |
+            Jetlink-HUD-candidate.zip
+            candidate-versions.json
+
+  propose-update:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Jetlink-HUD-candidate
+      - name: Propose a tested base update without changing main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          if cmp -s versions.json candidate-versions.json; then
+            echo 'Current pinned version is already the candidate.'
+            exit 0
+          fi
+          branch="upstream/jetlink-${CANDIDATE_SHA:0:12}"
+          if git ls-remote --exit-code origin "refs/heads/$branch" >/dev/null 2>&1; then
+            echo "Candidate branch already exists: $branch"
+            exit 0
+          fi
+          git checkout -b "$branch"
+          cp candidate-versions.json versions.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add versions.json
+          git commit -m "Update JetLink HUD base to $CANDIDATE_SHA"
+          git push origin "$branch"
+          printf '%s\n' 'HUD patches, protocol checks, Swift HUD tests and Mac build passed.' 'Validate C4 model connection and TURZX output before merging. This does not update C4.' > /tmp/hud-pr-body.txt
+          gh pr create --base main --head "$branch" --title "Update JetLink HUD base ${CANDIDATE_SHA:0:12}" --body-file /tmp/hud-pr-body.txt
