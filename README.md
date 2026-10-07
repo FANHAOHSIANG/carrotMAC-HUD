@@ -7,7 +7,7 @@ CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始�
 - JetLink：`51ffd10825d9704f21293dc51d08244e8af86197`
 - Carrot helper：`a564ce1dc082909b1fdc73b72e64d920336b34d6`
 - 通訊協定：**protocol 2**，版本記錄於 [versions.json](versions.json)。
-- 使用者已確認 v1 在 Mac/C4/TURZX 有畫面；新增 App 自動啟動與雲端編譯流程仍需驗證。
+- 使用者已確認 v1 在 Mac/C4/TURZX 有畫面；新增 App 自動啟動已通過雲端 Mac 編譯，仍需本機確認 HUD 啟動與退出。
 - 官方目前使用 protocol 3，**尚未適配**。更新檢查遇到差異會 blocked，保留以上版本；不是修改協定數字就能相容。
 
 ## 已裝過 v1：更新 App 與 HUD
@@ -18,7 +18,7 @@ CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始�
 4. 成功後才替換原本 `~/CarrotMacHUD/jetlink/macos/build/Jetlink.app`，並備份 App/helper。之後直接點修改版 App；保持 **Start server on launch** 開啟。
 5. 需要還原時，在退出 App 後執行 **04-Rollback.command**。
 
-保留 Xcode、Homebrew 與現有 Python HUD 環境。此流程不更新 C4，不更換模型；C4 與 Mac 的實際通訊版本仍須配對。來源與備份會留在 ~/CarrotMacHUD，請管理磁碟空間。
+保留完整 Xcode、Homebrew 與現有 Python HUD 環境。雲端已用 Xcode 26.6 驗證；若本機出現 Swift typed throws 編譯錯誤，請先更新 Xcode 並選取完整 Xcode 開發目錄。此流程不更新 C4，不更換模型；C4 與 Mac 的實際通訊版本仍須配對。來源與備份會留在 ~/CarrotMacHUD，請管理磁碟空間。
 
 第一次安裝可執行 [v1/01-Install.command](v1/01-Install.command)，再執行根目錄 03-Update.command。
 [AppAutostart](AppAutostart) 保留獨立啟動整合補丁；原本 ZIP 也保留。
@@ -42,7 +42,7 @@ HUD 傳輸補丁在 v1/jetlink-mac-hud.patch；App 啟動補丁在 AppAutostart/
 helper 原始碼在 AppAutostart/mac_hud_supervisor.py。官方更新導致衝突時，需要先修補這些差異並更新測試。
 這是「官方原始碼＋HUD overlay」流程，保留原始碼歷史與目前安裝，不會強制 reset 你的 Mac checkout。
 
-本次新增的相容性檢查、更新/還原配對與補丁套用已在 Linux 驗證。Mac Swift 編譯由 Actions 或你的 Mac 執行，尚未宣稱通過；C4/TURZX 新版實機測試仍需完成。
+[雲端驗證已通過](https://github.com/FANHAOHSIANG/carrotMAC-HUD/actions/runs/37659804608)：6 項 Python 測試、補丁套用、2 項 Swift HUD 測試、Apple Silicon App 編譯及 ad hoc 簽名驗證（macOS 26／Xcode 26.6）。C4/TURZX 的新版自動啟動、退出清理與推論延遲仍需本機實測。
 授權沿用各 upstream；本 repository 不包含模型權重。
 
 <details>
