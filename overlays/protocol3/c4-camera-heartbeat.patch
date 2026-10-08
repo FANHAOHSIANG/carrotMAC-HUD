@@ -1,0 +1,11 @@
+--- a/tools/jetlink/hud_protocol.py
++++ b/tools/jetlink/hud_protocol.py
+@@ -115,7 +115,7 @@
+     now = time.monotonic()
+     link = _fresh(LINK_STATUS, now)
+     try:
+-      host_display = (host_label(link.get('peer')) == 'jetSON' and
++      host_display = (host_label(link.get('peer')) in ('jetSON', 'MAC') and
+                       0 <= now - float(link['telemetry_updated']) < 3 and
+                       link['telemetry'].get('carrot_hud_connected') is True)
+     except (KeyError, TypeError, ValueError):

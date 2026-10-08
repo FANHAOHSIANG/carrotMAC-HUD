@@ -1,6 +1,8 @@
 name: Check official JetLink updates
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     paths:
@@ -9,6 +11,7 @@ on:
       - 'tests/**'
       - 'v1/**'
       - 'AppAutostart/**'
+      - 'overlays/**'
       - '.github/workflows/check-upstream.yml'
   workflow_dispatch:
     inputs:
@@ -24,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: check-official-jetlink
+  group: check-official-jetlink-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -42,7 +45,7 @@ jobs:
           UPSTREAM_REF: ${{ inputs.upstream_ref || '' }}
         run: |
           if [[ -z "$UPSTREAM_REF" ]]; then
-            if [[ "$GITHUB_EVENT_NAME" == 'push' ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == 'push' || "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
               UPSTREAM_REF="$(python3 -c 'import json; print(json.load(open("versions.json"))["jetlink_revision"])')"
             else
               UPSTREAM_REF=main
@@ -97,6 +100,8 @@ jobs:
           CARROT_HUD_DIR: ${{ runner.temp }}/carrot-hud-tests
         run: |
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter CarrotHUDTests
+      - name: Verify protocol-3 queued and stateful model inference
+        run: swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter 'ProtocolTests|ServerTests'
       - name: Build and verify App
         run: |
           make -C candidate-jetlink/macos app
@@ -111,6 +116,7 @@ jobs:
 
   propose-update:
     needs: [prepare, build]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write

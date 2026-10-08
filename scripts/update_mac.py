@@ -35,6 +35,8 @@ def main():
             print('已還原 App 與 helper。')
             return
         versions = json.loads((root / 'versions.json').read_text())
+        print(f"Mac App 將更新到 protocol {versions['protocol']}。C4 需包含 "
+              f"{versions.get('comma_revision', versions['carrot_revision'])}；本工具不會更新 C4。", flush=True)
         if revision(base / 'carrot') != versions['carrot_revision']:
             raise ValueError('Carrot helper 原始碼版本不符，保留舊 App。')
         if not app.is_dir():
@@ -46,6 +48,7 @@ def main():
         import os
         env = dict(os.environ, CARROT_HUD_DIR=str(root.parent / 'test-hud-runtime'))
         run('swift', 'test', '--package-path', candidate / 'JetlinkKit', '--filter', 'CarrotHUDTests', env=env)
+        run('swift', 'test', '--package-path', candidate / 'JetlinkKit', '--filter', 'ProtocolTests|ServerTests', env=env)
         run('make', '-C', candidate / 'macos', 'app')
         new_app = candidate / 'macos/build/Jetlink.app'
         run('codesign', '--verify', '--deep', '--strict', new_app)
