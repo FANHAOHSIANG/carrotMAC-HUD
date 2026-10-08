@@ -1,4 +1,4 @@
-name: Check official JetLink updates
+name: Sync official JetLink releases
 
 on:
   pull_request:
@@ -16,12 +16,12 @@ on:
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: 'Official branch/tag/SHA; main checks the newest version'
+        description: 'latest syncs the stable release; other refs build a candidate only'
         required: true
-        default: main
+        default: latest
         type: string
   schedule:
-    - cron: '20 2 * * *'
+    - cron: '17 */6 * * *'
 
 permissions:
   contents: read
@@ -36,24 +36,25 @@ jobs:
     outputs:
       ready: ${{ steps.report.outputs.ready }}
       sha: ${{ steps.report.outputs.sha }}
+      promote: ${{ steps.select.outputs.promote }}
     steps:
       - uses: actions/checkout@v4
       - name: Test compatibility guard
         run: python3 -m unittest discover -s tests -v
-      - name: Prepare official source with HUD patches
+      - name: Resolve immutable official release or pinned test source
+        id: select
         env:
           UPSTREAM_REF: ${{ inputs.upstream_ref || '' }}
-        run: |
-          if [[ -z "$UPSTREAM_REF" ]]; then
-            if [[ "$GITHUB_EVENT_NAME" == 'push' || "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
-              UPSTREAM_REF="$(python3 -c 'import json; print(json.load(open("versions.json"))["jetlink_revision"])')"
-            else
-              UPSTREAM_REF=main
-            fi
-          fi
-          python3 scripts/prepare_upstream.py --ref "$UPSTREAM_REF"
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/resolve_upstream.py
+      - name: Prepare official source with HUD patches
+        if: steps.select.outputs.prepare == 'true'
+        env:
+          UPSTREAM_REF: ${{ steps.select.outputs.ref }}
+        run: python3 scripts/prepare_upstream.py --ref "$UPSTREAM_REF"
       - name: Record compatibility result
         id: report
+        if: steps.select.outputs.prepare == 'true'
         run: |
           python3 - <<'PY'
           import json, os
@@ -69,11 +70,13 @@ jobs:
           PY
       - name: Package candidate source
         if: steps.report.outputs.ready == 'true'
-        run: tar -czf candidate-source.tar.gz candidate-jetlink candidate-versions.json
+        run: tar -czf candidate-source.tar.gz candidate-jetlink candidate-versions.json upstream-selection.json
       - uses: actions/upload-artifact@v4
         with:
           name: compatibility-report
-          path: upstream-report.json
+          path: |
+            upstream-report.json
+            upstream-selection.json
       - uses: actions/upload-artifact@v4
         if: steps.report.outputs.ready == 'true'
         with:
@@ -107,7 +110,7 @@ jobs:
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ServerHooksTests
       - name: Build and verify App
         run: |
-          make -C candidate-jetlink/macos app
+          JETLINK_VERSION="$(python3 -c 'import json;print(json.load(open("candidate-versions.json"))["jetlink_version"])')" make -C candidate-jetlink/macos app
           codesign --verify --deep --strict candidate-jetlink/macos/build/Jetlink.app
           ditto -c -k --sequesterRsrc --keepParent candidate-jetlink/macos/build/Jetlink.app Jetlink-HUD-candidate.zip
       - uses: actions/upload-artifact@v4
@@ -116,39 +119,38 @@ jobs:
           path: |
             Jetlink-HUD-candidate.zip
             candidate-versions.json
+            upstream-selection.json
 
-  propose-update:
+  sync-main:
     needs: [prepare, build]
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.promote == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: Jetlink-HUD-candidate
-      - name: Propose a tested base update without changing main
+      - name: Promote only the tested release, retaining HUD and C4 pairing
         env:
-          GH_TOKEN: ${{ github.token }}
-          CANDIDATE_SHA: ${{ needs.prepare.outputs.sha }}
+          TESTED_SHA: ${{ needs.prepare.outputs.sha }}
+          EXPECTED_BASE: ${{ github.sha }}
         run: |
-          if cmp -s versions.json candidate-versions.json; then
-            echo 'Current pinned version is already the candidate.'
+          git fetch origin main
+          if [[ "$(git rev-parse origin/main)" != "$EXPECTED_BASE" ]]; then
+            echo 'Main changed during validation; retain it and retry on the next check.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          branch="upstream/jetlink-${CANDIDATE_SHA:0:12}"
-          if git ls-remote --exit-code origin "refs/heads/$branch" >/dev/null 2>&1; then
-            echo "Candidate branch already exists: $branch"
+          python3 scripts/sync_versions.py
+          if git diff --quiet -- versions.json; then
+            echo 'Already synchronized.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          git checkout -b "$branch"
-          cp candidate-versions.json versions.json
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add versions.json
-          git commit -m "Update JetLink HUD base to $CANDIDATE_SHA"
-          git push origin "$branch"
-          printf '%s\n' 'HUD patches, protocol checks, Swift HUD tests and Mac build passed.' 'Validate C4 model connection and TURZX output before merging. This does not update C4.' > /tmp/hud-pr-body.txt
-          gh pr create --base main --head "$branch" --title "Update JetLink HUD base ${CANDIDATE_SHA:0:12}" --body-file /tmp/hud-pr-body.txt
+          git commit -m "Sync tested official JetLink release $TESTED_SHA"
+          # Fast-forward only. A later concurrent edit rejects this push.
+          git push origin HEAD:refs/heads/main
+          echo "Updated main to tested JetLink $TESTED_SHA. Run 03-Update.command on the Mac to install." >> "$GITHUB_STEP_SUMMARY"

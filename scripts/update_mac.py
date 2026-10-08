@@ -35,7 +35,7 @@ def main():
             print('已還原 App 與 helper。')
             return
         versions = json.loads((root / 'versions.json').read_text())
-        print(f"Mac App 將更新到 protocol {versions['protocol']}。C4 需包含 "
+        print(f"Mac App 將更新到 JetLink {versions.get('jetlink_version', '固定版')}，protocol {versions['protocol']}。C4 需包含 "
               f"{versions.get('comma_revision', versions['carrot_revision'])}；本工具不會更新 C4。", flush=True)
         if revision(base / 'carrot') != versions['carrot_revision']:
             raise ValueError('Carrot helper 原始碼版本不符，保留舊 App。')
@@ -46,11 +46,12 @@ def main():
         new_helper = root / 'AppAutostart/mac_hud_supervisor.py'
         compile(new_helper.read_text(), str(new_helper), 'exec')
         import os
-        env = dict(os.environ, CARROT_HUD_DIR=str(root.parent / 'test-hud-runtime'))
+        env = dict(os.environ, CARROT_HUD_DIR=str(root.parent / 'test-hud-runtime'),
+                   JETLINK_VERSION=versions['jetlink_version'])
         run('swift', 'test', '--package-path', candidate / 'JetlinkKit', '--filter', 'CarrotHUDTests', env=env)
         for suite in ('ProtocolTests', 'ServerTests/', 'ServerHooksTests'):
             run('swift', 'test', '--package-path', candidate / 'JetlinkKit', '--filter', suite, env=env)
-        run('make', '-C', candidate / 'macos', 'app')
+        run('make', '-C', candidate / 'macos', 'app', env=env)
         new_app = candidate / 'macos/build/Jetlink.app'
         run('codesign', '--verify', '--deep', '--strict', new_app)
         backup = base / 'backups' / datetime.now().strftime('%Y%m%d-%H%M%S-%f')

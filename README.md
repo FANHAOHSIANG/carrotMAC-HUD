@@ -4,7 +4,7 @@ CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始�
 
 ## Protocol 3 更新版
 
-- JetLink：`24e8917673829cbe1d146735956e9038cc93f227`（官方 v0.8.3、Protocol 3）。
+- JetLink：`4b747aebad3d8d96ab26d76f1668f2b2ecb1b667`（官方 v0.8.5、Protocol 3；後續固定版本以 versions.json 為準）。
 - C4：需更新到包含 `034581414fa57fb20738a47238d1f8b266fa38d3` 的 Carrot。
 - Mac 顯示 helper 仍固定於 `a564ce1dc082909b1fdc73b72e64d920336b34d6`；它只是 renderer/USB 顯示執行環境，不是 C4 版本。
 - HUD 與 App 自動啟動補丁已移植到 `overlays/protocol3/`，保留原本 v1 的 Protocol 2 補丁供歷史與還原參考。
@@ -41,22 +41,27 @@ sudo reboot
 第一次安裝可執行 [v1/01-Install.command](v1/01-Install.command)，再執行根目錄 03-Update.command。
 [AppAutostart](AppAutostart) 保留獨立啟動整合補丁；原本 ZIP 也保留。
 
-## 在 Windows 網頁檢查官方更新
+## 自動同步官方正式版
 
-打開 **Actions → Check official JetLink updates → Run workflow**：
+GitHub Actions 每 6 小時檢查官方最新正式 release（台灣時間約 02:17、08:17、14:17、20:17；排程可能延遲）。
 
-- `upstream_ref = main`：檢查官方最新版。
-- 填入 versions.json 的 JetLink SHA：驗證目前固定版的補丁與 Mac 編譯。
-- 每天也會檢查官方 main，結果與原因在 workflow Summary 與 compatibility-report artifact。
-- 檢查不相容時標示 **Update blocked; current version retained**。這表示檢查完成，**不是已同步**；Mac build 會跳過。
-- 協定及補丁通過才在 GitHub 的 Apple Silicon Mac runner 編譯、簽名驗證，產生 **Jetlink-HUD-candidate** artifact。ZIP 是 ad hoc 簽名的候選 App，未公證，並且需要本機 HUD Python 環境；不能當成正式實機驗收。
-- 候選基準和現有版本不同時會提出更新 versions.json 的 PR；**不自動合併**。先驗證 C4 模型、TURZX 畫面與退出清理，再合併，Mac 執行 03-Update.command 才安裝。
+- 先解析 release tag 的固定 commit，再檢查 Protocol 3、套用 HUD／自動啟動補丁、執行 Python 與 Swift 測試、編譯 Mac App 並驗證簽名。
+- 全部通過後，直接更新本 repository main 的 versions.json。只更新 JetLink revision／版本，不更換 HUD helper、C4 配對或通訊協定。
+- 不相容或編譯失敗時保留現有版本；沒有新版本則跳過 Mac 編譯。驗證期間 main 有其他修改也會延後同步。
+- GitHub 同步不會遠端安裝到你的 Mac；要安裝最新通過驗證的版本，退出 App 後執行 **03-Update.command**。
 
-若 Actions 尚未允許執行，按 GitHub 顯示的啟用按鈕。若建立 PR 被 repository 政策擋下，檢查 **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**；不需設定 PAT 或把密碼寫進程式碼。若你想保留禁用設定，也可自行提交 versions.json 更新。
+手動檢查：打開 **Actions → Sync official JetLink releases → Run workflow**，選 main：
+
+- `upstream_ref = latest`：立即執行正式版同步流程。
+- `upstream_ref = main`、指定 tag 或 commit SHA：只產生測試候選，不自動推送到 main。
+- 結果在 workflow Summary 與 compatibility-report artifact；不相容會顯示 **Update blocked; current version retained**。
+- **Jetlink-HUD-candidate** artifact 包含 ad hoc 簽名的候選 App，未公證，仍需本機 HUD Python 環境與實機驗證。
+
+若 Actions 尚未允許執行，按 GitHub 顯示的啟用按鈕。同步 job 已設定 contents: write，使用內建 GITHUB_TOKEN，無需 PAT；若 repository 分支規則禁止自動推送，該次同步會失敗並保留原版本。
 
 ## 維護方式
 
-HUD 傳輸補丁在 v1/jetlink-mac-hud.patch；App 啟動補丁在 AppAutostart/jetlink-autostart.patch；
+Protocol 3 的 HUD 傳輸與 App 啟動補丁在 overlays/protocol3/；
 helper 原始碼在 AppAutostart/mac_hud_supervisor.py。官方更新導致衝突時，需要先修補這些差異並更新測試。
 這是「官方原始碼＋HUD overlay」流程，保留原始碼歷史與目前安裝，不會強制 reset 你的 Mac checkout。
 

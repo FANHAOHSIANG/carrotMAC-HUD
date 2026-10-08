@@ -45,7 +45,12 @@ def prepare(root, destination, reference):
     run('git', '-C', destination, 'checkout', '--detach', 'FETCH_HEAD')
     sha = run('git', '-C', destination, 'rev-parse', 'HEAD').stdout.strip()
     pinned = destination / 'JetlinkKit/Sources/JetlinkKit/Pinned.swift'
-    check_protocol(pinned.read_text(), versions['protocol'])
+    pins = pinned.read_text()
+    check_protocol(pins, versions['protocol'])
+    product = re.search(r'productVersion\s*:\s*String\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', pins)
+    if not product:
+        raise CompatibilityError('找不到正式版產品版本，需要人工適配。')
+    versions['jetlink_version'] = product[1]
     for patch in overlay_patches(root, versions['protocol']):
         run('git', '-C', destination, 'apply', '--check', patch)
         run('git', '-C', destination, 'apply', patch)

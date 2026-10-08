@@ -154,7 +154,7 @@ index 9b1a7d0..270d55e 100644
  
    deinit {
 diff --git a/JetlinkKit/Sources/JetlinkServer/Session.swift b/JetlinkKit/Sources/JetlinkServer/Session.swift
-index 5ecd9b3..ec3ee06 100644
+index d8d8715..f538bef 100644
 --- a/JetlinkKit/Sources/JetlinkServer/Session.swift
 +++ b/JetlinkKit/Sources/JetlinkServer/Session.swift
 @@ -7,6 +7,11 @@ import JetlinkRegistry
@@ -169,7 +169,7 @@ index 5ecd9b3..ec3ee06 100644
    private let transport: any MessageLink
    private let host: EngineHost
    private let log = ServerLog(category: "session")
-@@ -98,6 +103,10 @@ final class Session: @unchecked Sendable {
+@@ -100,6 +105,10 @@ final class Session: @unchecked Sendable {
  
    /// The connection is gone. The engine stays.
    func close() {
@@ -180,7 +180,7 @@ index 5ecd9b3..ec3ee06 100644
      host.lock.lock()
      if host.session === self {
        host.session = nil
-@@ -162,6 +171,18 @@ final class Session: @unchecked Sendable {
+@@ -164,6 +173,18 @@ final class Session: @unchecked Sendable {
    }
  
    func handle(_ message: Message) throws {
@@ -199,9 +199,9 @@ index 5ecd9b3..ec3ee06 100644
      guard let type = Wire.Msg(rawValue: message.msgType) else {
        try error(message.seq, "unknown_message", "type \(message.msgType)")
        return
-@@ -255,6 +276,12 @@ final class Session: @unchecked Sendable {
-     for (key, value) in host.backend.describe() {
-       response[key] = value
+@@ -278,6 +299,12 @@ final class Session: @unchecked Sendable {
+       response["frame_port"] = Int(offer.port)
+       response["frame_token"] = Int(offer.token)
      }
 +    #if os(macOS)
 +    carrotHUDEnabled = CarrotHUD.shared.claim(carrotHUDOwner)
