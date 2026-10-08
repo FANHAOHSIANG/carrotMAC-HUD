@@ -41,6 +41,6 @@ bash "$BASE/carrot/tools/jetlink/setup_mac_hud.sh"
 export CARROT_HUD_DIR="$BASE/test-hud-runtime"
 swift test --package-path "$BASE/jetlink/JetlinkKit" --filter CarrotHUDTests
 unset CARROT_HUD_DIR
-make -C "$BASE/jetlink/macos" app
+JETLINK_VERSION="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["jetlink_version"])' "$HERE/../versions.json")" make -C "$BASE/jetlink/macos" app
 printf '\n安裝完成。先結束原本的 JetLink App，再執行 02-Start.command。\n'
 read -r -p '按 Enter 關閉'
