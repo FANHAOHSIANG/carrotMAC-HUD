@@ -1,5 +1,7 @@
 # carrotMAC-HUD
 
+本分支另含 [C4 停車換模型實驗修補](overlays/protocol3/parked-switch/README.md)。需要在 C4 額外安裝，尚未實機驗證；Mac 的 03-Update.command 不會安裝它。
+
 CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始碼補丁、Mac 更新腳本與官方更新檢查，不需要另外建立名為 jetlink 的 Fork。
 
 ## Protocol 3 更新版

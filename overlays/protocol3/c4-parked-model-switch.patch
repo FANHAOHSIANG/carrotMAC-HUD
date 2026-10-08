@@ -1,0 +1,246 @@
+diff --git a/openpilot/selfdrive/modeld/jetlink/daemon.py b/openpilot/selfdrive/modeld/jetlink/daemon.py
+index a10bb8d..6d878f0 100644
+--- a/openpilot/selfdrive/modeld/jetlink/daemon.py
++++ b/openpilot/selfdrive/modeld/jetlink/daemon.py
+@@ -16,6 +16,7 @@ from openpilot.selfdrive.modeld.jetlink import VENDOR
+ from openpilot.selfdrive.modeld.jetlink.link import (SOCKET, STATUS, REQUEST, REPLY, PacketReader, send, send_parts)
+ from openpilot.selfdrive.modeld.jetlink.phase import Publisher as PhasePublisher
+ from openpilot.selfdrive.modeld.jetlink.mac import prepare, PreparationDeferred
++from openpilot.selfdrive.modeld.jetlink.parked import ParkedWindow
+ from openpilot.selfdrive.modeld.jetlink.compat import ProtocolChoice
+ from openpilot.selfdrive.modeld.jetlink.mobile import transport_mode, setup_gadget, MobileCable, AutoTransport, MobileLinkError
+ from openpilot.selfdrive.modeld.jetlink.contracts import model_name
+@@ -33,6 +34,7 @@ SESSION_MODE = 'usb'
+ ACTIVE_UDC = None
+ SESSION_DETACHED = False
+ log = logging.getLogger('carrot.jetlink')
++PARKED_WINDOW = ParkedWindow()
+ sys.path.insert(0, str(VENDOR.parents[1] / 'tools/jetlink'))
+ from hud_protocol import Publisher, HUD_CAPABILITY, HUD_MESSAGE
+ from hud_navi import CAPABILITY as NAVI_CAPABILITY, MESSAGE as NAVI_MESSAGE
+@@ -189,6 +191,11 @@ def serve_local(listener, client, peer, wifi=None):
+       publisher.close()
+ 
+ 
++def setup_allowed(params, peer):
++  offroad = params.get_bool('IsOffroad') and not params.get_bool('IsOnroad')
++  return offroad or (peer.get('protocol') == 3 and may_provision(peer, session_mode()) and PARKED_WINDOW())
++
++
+ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
+   from openpilot.common.params import Params
+   from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
+@@ -202,7 +209,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
+   requested = True
+   follows_app = peer.get('protocol') == 3 and may_provision(peer, session_mode())
+   while host_attached():
+-    if follows_app and requested and params.get_bool('IsOffroad') and not params.get_bool('IsOnroad'):
++    if follows_app and requested and setup_allowed(params, peer):
+       # The App's Use Model must not compete with our old ENGINE_REQ.
+       # HELLO clears that request without dropping the physical cable.
+       fresh_peer = client.hello()
+@@ -482,7 +489,7 @@ def main():
+             last_progress = time.monotonic()
+ 
+         peer = wait_for_selection(client, peer, progress)
+-        prepare(client, peer, lambda current=params: current.get_bool('IsOffroad') and not current.get_bool('IsOnroad'),
++        prepare(client, peer, lambda current=params, current_peer=peer: setup_allowed(current, current_peer),
+                 host_attached, progress, mode=session_mode())
+         spec = client.spec
+         if spec is None:
+@@ -595,7 +602,7 @@ def wait_for_selection(client, peer, progress):
+   while peer.get('loaded') is None:
+     if not host_attached():
+       raise PreparationDeferred('Jetlink host disconnected before App model preparation')
+-    progress('app-selection', None, 'With ignition off, select Use Model in the Jetlink App')
++    progress('app-selection', None, 'Select Use Model with ignition off, or while the parked-switch native fallback is ready')
+     time.sleep(1)
+     current = client.state()
+     if not isinstance(current, dict) or 'loaded' not in current:
+diff --git a/openpilot/selfdrive/modeld/jetlink/mac.py b/openpilot/selfdrive/modeld/jetlink/mac.py
+index ba92f17..0961ec1 100644
+--- a/openpilot/selfdrive/modeld/jetlink/mac.py
++++ b/openpilot/selfdrive/modeld/jetlink/mac.py
+@@ -27,7 +27,7 @@ def require_setup(offroad, connected):
+   if not connected():
+     raise PreparationDeferred('Jetlink host disconnected; waiting for reconnection')
+   if not offroad():
+-    raise PreparationDeferred('Jetlink model setup requires ignition off')
++    raise PreparationDeferred('Jetlink model setup requires ignition off or a validated parked-switch window')
+ 
+ 
+ def model_file(offroad, connected, progress, cache=CACHE):
+@@ -137,7 +137,7 @@ def prepare(client, peer, offroad, connected, progress, cache=CACHE, mode='usb')
+     approved = approved_spec(cache)
+     needs_approval = approved.sha256 != selected if approved is not None else selected != SPEC.sha256
+     if needs_approval and not offroad():
+-      raise PreparationDeferred('A different Jetlink App model must be approved with ignition off')
++      raise PreparationDeferred('A different Jetlink App model must be approved with ignition off or a validated parked-switch window')
+   else:
+     approved = None
+     needs_approval = False
+diff --git a/openpilot/selfdrive/modeld/jetlink/model.py b/openpilot/selfdrive/modeld/jetlink/model.py
+index 67fd0df..1e65146 100644
+--- a/openpilot/selfdrive/modeld/jetlink/model.py
++++ b/openpilot/selfdrive/modeld/jetlink/model.py
+@@ -9,6 +9,8 @@ import numpy as np
+ 
+ from openpilot.selfdrive.modeld.jetlink.link import ClientConnection, SPEC, FAULT, state
+ from openpilot.selfdrive.modeld.jetlink.prepare import WarpPreparation
++from openpilot.selfdrive.modeld.jetlink.parked import ENABLE as PARKED_ENABLE, SERVICES, MAX_AGE as PARKED_MAX_AGE, stationary_disabled
++from openpilot.common.jetlink_peer import may_provision
+ from openpilot.selfdrive.modeld.jetlink.contracts import model_name, parse_outputs
+ 
+ MODEL_STATUS = Path('/dev/shm/carrot-jetlink-model.json')
+@@ -137,20 +139,36 @@ class JoiningModel:
+     self.error = ''
+     self.small_runs = 0
+     self.last_slow_log = 0.
++    self.parked_switch = False
++    self.parked_small_runs = 0
++    self.parked_native_at = 0.
++    self.parked_status = False
+ 
+   def update(self, sm, metadata):
+     self.source_sof = metadata.timestamp_sof if self.phase_enabled else 0
+     now = time.monotonic()
+-    self.join_allowed = may_join(now, {k: sm[k] for k in ('carState', 'selfdriveState', 'carControl')},
+-                                {k: sm.valid[k] and sm.alive[k] for k in ('carState', 'selfdriveState', 'carControl')}, sm.recv_time)
+-    if now >= self.next_status:
+-      self.ready = state().get('state') == 'ready'
++    messages = {k: sm[k] for k in SERVICES}
++    valid = {k: bool(sm.valid[k] and sm.alive[k]) for k in SERVICES}
++    enabled = PARKED_ENABLE.is_file()
++    remote_state = state() if enabled or self.parked_status or now >= self.next_status else {}
++    peer = remote_state.get('peer') or {}
++    mode = remote_state.get('transport', 'usb')
++    self.parked_switch = bool(enabled and peer.get('protocol') == 3
++                              and may_provision(peer, mode)
++                              and stationary_disabled(now, messages, valid, sm.recv_time))
++    self.join_allowed = (not self.parked_switch and may_join(now, messages, valid, sm.recv_time)
++                         and (not enabled or stationary_disabled(now, messages, valid, sm.recv_time, require_park=False)))
++    if now >= self.next_status or self.parked_switch != self.parked_status:
++      self.ready = remote_state.get('state') == 'ready'
+       record = {'active': self.active, 'ready': self.ready, 'model': model_name(self.spec), 'sha256': self.spec.sha256,
+-                'error': self.error, 'updated': now}
++                'error': self.error, 'updated': now,
++                'parked_switch_ready': (self.parked_switch and self.parked_small_runs >= 3 and not self.active
++                                        and 0 <= now - self.parked_native_at < PARKED_MAX_AGE)}
+       tmp = MODEL_STATUS.with_suffix('.tmp')
+       tmp.write_text(json.dumps(record))
+       os.replace(tmp, MODEL_STATUS)
+-      self.next_status = now + 1
++      self.next_status = now + (.1 if self.parked_switch else 1)
++      self.parked_status = self.parked_switch
+ 
+   def _reset_small(self):
+     if hasattr(self.small, 'reset'):
+@@ -166,6 +184,29 @@ class JoiningModel:
+ 
+   def run(self, bufs, transforms, inputs, prepare_only):
+     from openpilot.common.swaglog import cloudlog
++    if self.parked_switch:
++      # End remote inference first, reset native recurrence, then acknowledge
++      # three completed native outputs. The daemon cannot release HELLO early.
++      if self.connection is not None:
++        self.connection.close()
++        self.connection = None
++      if self.client is not None:
++        self.client.close()
++        self.client = None
++      if self.active:
++        self._reset_small()
++        self.parked_small_runs = 0
++        self.parked_native_at = 0.
++      self.active = False
++      self.reset = True
++      result = self.small.run(bufs, transforms, inputs, prepare_only)
++      if result is not None:
++        self.small_runs += 1
++        self.parked_small_runs += 1
++        self.parked_native_at = time.monotonic()
++      return result
++    self.parked_small_runs = 0
++    self.parked_native_at = 0.
+     if self.preparation is not None and not self.ready:
+       self.preparation.close()
+       self.preparation = None
+diff --git a/openpilot/selfdrive/modeld/jetlink/parked.py b/openpilot/selfdrive/modeld/jetlink/parked.py
+new file mode 100644
+index 0000000..94164d0
+--- /dev/null
++++ b/openpilot/selfdrive/modeld/jetlink/parked.py
+@@ -0,0 +1,73 @@
++"""Opt-in parked App selection; never fake IsOffroad or trust stale telemetry."""
++import json
++import math
++from pathlib import Path
++import time
++
++ENABLE = Path('/data/jetlink-parked-model-switch')
++MODEL_STATUS = Path('/dev/shm/carrot-jetlink-model.json')
++SERVICES = ('carState', 'selfdriveState', 'carControl')
++MAX_AGE = .25
++HOLD = 2.
++
++
++def stationary_disabled(now, messages, valid, received, require_park=True):
++  try:
++    if not all(valid.get(k) is True and 0 <= now - received[k] < MAX_AGE for k in SERVICES):
++      return False
++    car, drive, control = (messages[k] for k in SERVICES)
++    speeds = (float(car.vEgo), float(car.vEgoRaw))
++    return (car.canValid is True and car.canTimeout is False and car.standstill is True
++            and str(car.gearShifter) in (('park',) if require_park else ('park', 'drive'))
++            and all(math.isfinite(v) and abs(v) < .01 for v in speeds)
++            and drive.enabled is False and drive.active is False
++            and control.enabled is False and control.latActive is False and control.longActive is False)
++  except (KeyError, AttributeError, TypeError, ValueError, OverflowError):
++    return False
++
++
++class ParkedGate:
++  def __init__(self):
++    self.since = None
++
++  def update(self, now, messages, valid, received):
++    if not stationary_disabled(now, messages, valid, received):
++      self.since = None
++      return False
++    if self.since is None or now < self.since:
++      self.since = now
++    return now - self.since >= HOLD
++
++
++def fallback_ack(now, path=MODEL_STATUS):
++  try:
++    record = json.loads(path.read_text())
++    age = now - float(record['updated'])
++    return (0 <= age < MAX_AGE and record.get('parked_switch_ready') is True
++            and record.get('active') is False)
++  except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
++    return False
++
++
++class ParkedWindow:
++  """Daemon checks fresh CAN/control state AND a running native-model handoff."""
++  def __init__(self):
++    self.sm = None
++    self.gate = ParkedGate()
++
++  def __call__(self):
++    if not ENABLE.is_file():
++      self.gate.since = None
++      return False
++    try:
++      if self.sm is None:
++        from cereal.messaging import SubMaster
++        self.sm = SubMaster(list(SERVICES))
++      self.sm.update(0)
++      now = time.monotonic()
++      allowed = self.gate.update(now, {k: self.sm[k] for k in SERVICES},
++                                 {k: bool(self.sm.valid[k] and self.sm.alive[k]) for k in SERVICES}, self.sm.recv_time)
++      return allowed and fallback_ack(now)
++    except Exception:
++      self.gate.since = None
++      return False

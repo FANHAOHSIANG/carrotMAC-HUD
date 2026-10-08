@@ -1,0 +1,19 @@
+name: Verify experimental C4 parked model switch
+
+on:
+  push:
+    branches: [experimental/parked-model-switch]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-c4-overlay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Existing Mac updater guards
+        run: python3 -m unittest discover -s tests -v
+      - name: Pinned official C4 patch and parked model handoff
+        run: python3 scripts/check_c4_parked.py
