@@ -101,7 +101,10 @@ jobs:
         run: |
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter CarrotHUDTests
       - name: Verify protocol-3 queued and stateful model inference
-        run: swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter 'ProtocolTests|ServerTests'
+        run: |
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ProtocolTests
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter 'ServerTests/'
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ServerHooksTests
       - name: Build and verify App
         run: |
           make -C candidate-jetlink/macos app

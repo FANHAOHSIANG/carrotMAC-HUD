@@ -328,3 +328,33 @@ index 0000000..64bc5fc
 +  func close() {}
 +}
 +#endif
+diff --git a/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift b/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
+index a76b15c..f3f3b32 100644
+--- a/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
++++ b/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
+@@ -77,9 +77,12 @@ struct ServerHooksTests {
+ 
+   @Test("The hello carries Python's keys, the host's sleep_after and what the backend adds")
+   func hello() throws {
+-    let python: Set = [
++    var python: Set = [
+       "protocol", "backend", "runtime_version", "device", "engine_state", "loaded", "frames_served", "cached_models", "telemetry", "sleep_after",
+     ]
++    #if os(macOS)
++    python.formUnion(["carrot_hud_v1", "carrot_navi_v1", "carrot_host"])
++    #endif
+     try serve(hooks: ServerHooks()) { _, client in
+       let hello = try client.hello()
+       #expect(Set(hello.keys) == python)
+@@ -99,7 +102,10 @@ struct ServerHooksTests {
+     let golden = try Golden("tiny_stateful")
+     let hooks = ServerHooks(telemetry: { ["temp_c": 51.5, "power_w": 12.25] })
+     func readings(_ object: Any?) -> [String: Double]? {
+-      (object as? [String: Any])?.compactMapValues { ($0 as? NSNumber)?.doubleValue }
++      // The display extension adds a Bool heartbeat; retain the exact
++      // numeric sensor assertions, excluding only that named extension key.
++      (object as? [String: Any])?.filter { $0.key != "carrot_hud_connected" }
++        .compactMapValues { ($0 as? NSNumber)?.doubleValue }
+     }
+     try serve(hooks: hooks) { server, client in
+       // The server samples the host's sensors on a thread of its own, when
