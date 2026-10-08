@@ -1,0 +1,148 @@
+diff --git a/macos/Jetlink/Server/CarrotHUDProcess.swift b/macos/Jetlink/Server/CarrotHUDProcess.swift
+new file mode 100644
+index 0000000..59002ec
+--- /dev/null
++++ b/macos/Jetlink/Server/CarrotHUDProcess.swift
+@@ -0,0 +1,114 @@
++import Foundation
++import Darwin
++import os
++
++/// The App manages the display child; it never opens the C4 USB transport.
++/// The Python supervisor owns its render/ffmpeg group and watches our PID,
++/// including when the App dies without running the normal quit handler.
++@MainActor
++final class CarrotHUDProcess {
++  private var process: Process?
++  private var output: FileHandle?
++  private var retry: Task<Void, Never>?
++  private var wanted = false
++  private var generation = UUID()
++  private let log = Logger(subsystem: "io.zoompilot.jetlink", category: "carrot-hud")
++
++  static var root: URL {
++    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("CarrotMacHUD/carrot", isDirectory: true)
++  }
++
++  func start() {
++    wanted = true
++    guard process == nil else { return }
++    retry?.cancel()
++    retry = nil
++    let python = Self.root.appendingPathComponent(".mac-hud-venv/bin/python")
++    let script = Self.root.appendingPathComponent("tools/jetlink/mac_hud_supervisor.py")
++    guard FileManager.default.isExecutableFile(atPath: python.path),
++          FileManager.default.fileExists(atPath: script.path) else {
++      log.error("HUD runtime missing. Run the CarrotMacHUD App integration installer.")
++      return
++    }
++    var pendingHandle: FileHandle?
++    do {
++      let directory = FileManager.default.homeDirectoryForCurrentUser
++        .appendingPathComponent("Library/Logs/CarrotMacHUD", isDirectory: true)
++      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++      let path = directory.appendingPathComponent("hud.log")
++      // Bound log size across launches/restarts. Never block the model loop.
++      if let size = try? path.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 10 * 1024 * 1024 {
++        let old = directory.appendingPathComponent("hud.previous.log")
++        try? FileManager.default.removeItem(at: old)
++        try? FileManager.default.moveItem(at: path, to: old)
++      }
++      if !FileManager.default.fileExists(atPath: path.path) {
++        FileManager.default.createFile(atPath: path.path, contents: nil)
++      }
++      let handle = try FileHandle(forWritingTo: path)
++      pendingHandle = handle
++      try handle.seekToEnd()
++      let child = Process()
++      child.executableURL = python
++      child.arguments = ["-u", script.path, "--parent-pid", String(ProcessInfo.processInfo.processIdentifier)]
++      child.currentDirectoryURL = Self.root
++      child.standardInput = FileHandle.nullDevice
++      child.standardOutput = handle
++      child.standardError = handle
++      let token = UUID()
++      generation = token
++      child.terminationHandler = { [weak self] child in
++        let status = child.terminationStatus
++        Task { @MainActor [weak self] in self?.ended(status: status, token: token) }
++      }
++      try child.run()
++      pendingHandle = nil
++      output = handle
++      process = child
++      log.info("Carrot HUD started in background; output is in Library/Logs/CarrotMacHUD/hud.log")
++    } catch {
++      try? pendingHandle?.close()
++      log.error("Could not start Carrot HUD: \(error.localizedDescription, privacy: .public)")
++      scheduleRetry()
++    }
++  }
++
++  private func ended(status: Int32, token: UUID) {
++    guard generation == token else { return }
++    process = nil
++    try? output?.close()
++    output = nil
++    // Another supervisor owns the panel. Never keep spawning contenders.
++    if wanted && status != 75 { scheduleRetry() }
++  }
++
++  private func scheduleRetry() {
++    guard wanted else { return }
++    retry?.cancel()
++    retry = Task { [weak self] in
++      do { try await Task.sleep(for: .seconds(5)) } catch { return }
++      guard let self, self.wanted else { return }
++      self.start()
++    }
++  }
++
++  func stop() async {
++    wanted = false
++    generation = UUID()
++    retry?.cancel()
++    retry = nil
++    guard let child = process else { return }
++    if child.isRunning { child.terminate() }
++    // Python stops the render/encoder group before it exits. No blocking
++    // waitUntilExit on the main actor; allow the quit UI to keep responding.
++    for _ in 0..<60 {
++      if !child.isRunning { break }
++      try? await Task.sleep(for: .milliseconds(100))
++    }
++    if child.isRunning { _ = Darwin.kill(child.processIdentifier, SIGKILL) }
++    child.terminationHandler = nil
++    process = nil
++    try? output?.close()
++    output = nil
++  }
++}
+diff --git a/macos/Jetlink/Server/ServerStore.swift b/macos/Jetlink/Server/ServerStore.swift
+index 16beec7..ab13075 100644
+--- a/macos/Jetlink/Server/ServerStore.swift
++++ b/macos/Jetlink/Server/ServerStore.swift
+@@ -57,6 +57,7 @@ final class ServerStore: ServerControlling {
+   @ObservationIgnored private let sleepAssertion: SleepAssertion
+   @ObservationIgnored private let isLive: Bool
+   @ObservationIgnored private let log = Logger(subsystem: "io.zoompilot.jetlink", category: "server")
++  @ObservationIgnored private let carrotHUD = CarrotHUDProcess()
+   @ObservationIgnored private var embedded: EmbeddedServer?
+   /// Building and starting the server, off the main thread.
+   @ObservationIgnored private var startTask: Task<Void, Never>?
+@@ -134,6 +135,7 @@ final class ServerStore: ServerControlling {
+         if self.runState == .starting {
+           self.runState = .serving
+           self.startedAt = Date()
++          self.carrotHUD.start()
+         }
+       case .failure(let error):
+         self.tearDown()
+@@ -158,6 +160,7 @@ final class ServerStore: ServerControlling {
+     default: break
+     }
+     runState = .stopping
++    await carrotHUD.stop()
+     await startTask?.value
+     if let embedded {
+       await Task.detached { embedded.stop(releasingEngine: true) }.value

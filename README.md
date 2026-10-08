@@ -2,13 +2,31 @@
 
 CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始碼補丁、Mac 更新腳本與官方更新檢查，不需要另外建立名為 jetlink 的 Fork。
 
-## 目前可用配對
+## Protocol 3 更新版
 
-- JetLink：`51ffd10825d9704f21293dc51d08244e8af86197`
-- Carrot helper：`a564ce1dc082909b1fdc73b72e64d920336b34d6`
-- 通訊協定：**protocol 2**，版本記錄於 [versions.json](versions.json)。
-- 使用者已確認 v1 在 Mac/C4/TURZX 有畫面；新增 App 自動啟動已通過雲端 Mac 編譯，仍需本機確認 HUD 啟動與退出。
-- 官方目前使用 protocol 3，**尚未適配**。更新檢查遇到差異會 blocked，保留以上版本；不是修改協定數字就能相容。
+- JetLink：`24e8917673829cbe1d146735956e9038cc93f227`（官方 v0.8.3、Protocol 3）。
+- C4：需更新到包含 `034581414fa57fb20738a47238d1f8b266fa38d3` 的 Carrot。
+- Mac 顯示 helper 仍固定於 `a564ce1dc082909b1fdc73b72e64d920336b34d6`；它只是 renderer/USB 顯示執行環境，不是 C4 版本。
+- HUD 與 App 自動啟動補丁已移植到 `overlays/protocol3/`，保留原本 v1 的 Protocol 2 補丁供歷史與還原參考。
+- 新模型的選擇由 JetLink App 管理。熄火並保持 C4 供電時，選擇相容的模型、按 **Use Model**，等模型準備及 C4 規格驗證完成。C4 不再強制覆蓋為固定 Cinque v2。
+- 不會因為發布新模型就自動切換；不是清單中的所有模型都符合 Carrot 的規格。READY 代表準備完成，還須確認外接推論啟用與延遲。
+- 實體 Mac/C4/TURZX、真實模型精度、USB 穩定性與持續推論效能仍需停車驗證。
+
+### C4 攝影機預覽補丁
+
+新 Carrot 的 `hud_protocol.py` 仍只把 Jetson 的顯示 heartbeat 當成遠端攝影機預覽需求。
+若 Mac HUD 需要道路攝影機畫面，尤其是 `ClusterHud=0` 時，請將
+`overlays/protocol3/c4-camera-heartbeat.patch` 複製到 C4，再於熄火狀態執行：
+
+```sh
+cd /data/openpilot
+git apply --check /data/c4-camera-heartbeat.patch
+git apply /data/c4-camera-heartbeat.patch
+sudo reboot
+```
+
+上例假設補丁放在 `/data/c4-camera-heartbeat.patch`。check 失敗時先查看是否已套用或版本改動，不要強行覆蓋。
+此補丁只允許 MAC heartbeat，不改推論或控制。Mac 更新腳本不會登入或更新 C4。
 
 ## 已裝過 v1：更新 App 與 HUD
 
@@ -18,7 +36,7 @@ CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始�
 4. 成功後才替換原本 `~/CarrotMacHUD/jetlink/macos/build/Jetlink.app`，並備份 App/helper。之後直接點修改版 App；保持 **Start server on launch** 開啟。
 5. 需要還原時，在退出 App 後執行 **04-Rollback.command**。
 
-保留完整 Xcode、Homebrew 與現有 Python HUD 環境。雲端已用 Xcode 26.6 驗證；若本機出現 Swift typed throws 編譯錯誤，請先更新 Xcode 並選取完整 Xcode 開發目錄。此流程不更新 C4，不更換模型；C4 與 Mac 的實際通訊版本仍須配對。來源與備份會留在 ~/CarrotMacHUD，請管理磁碟空間。
+更新前先確認 C4 已包含以上 Protocol 3 commit，並保持熄火。保留完整 Xcode、Homebrew 與現有 Python HUD 環境。雲端已用 Xcode 26.6 驗證；若本機出現 Swift typed throws 編譯錯誤，請先更新 Xcode 並選取完整 Xcode 開發目錄。此流程將 Mac App 從 Protocol 2 升級為 Protocol 3，但不更新 C4，不自動更換模型；C4 與 Mac 的實際通訊版本仍須配對。來源與備份會留在 ~/CarrotMacHUD，請管理磁碟空間。
 
 第一次安裝可執行 [v1/01-Install.command](v1/01-Install.command)，再執行根目錄 03-Update.command。
 [AppAutostart](AppAutostart) 保留獨立啟動整合補丁；原本 ZIP 也保留。
@@ -42,11 +60,11 @@ HUD 傳輸補丁在 v1/jetlink-mac-hud.patch；App 啟動補丁在 AppAutostart/
 helper 原始碼在 AppAutostart/mac_hud_supervisor.py。官方更新導致衝突時，需要先修補這些差異並更新測試。
 這是「官方原始碼＋HUD overlay」流程，保留原始碼歷史與目前安裝，不會強制 reset 你的 Mac checkout。
 
-[雲端驗證已通過](https://github.com/FANHAOHSIANG/carrotMAC-HUD/actions/runs/37659804608)：6 項 Python 測試、補丁套用、2 項 Swift HUD 測試、Apple Silicon App 編譯及 ad hoc 簽名驗證（macOS 26／Xcode 26.6）。C4/TURZX 的新版自動啟動、退出清理與推論延遲仍需本機實測。
+[Protocol 2 舊版雲端驗證紀錄](https://github.com/FANHAOHSIANG/carrotMAC-HUD/actions/runs/37659804608)：6 項 Python 測試、補丁套用、舊版 2 項 Swift HUD 測試、Apple Silicon App 編譯及 ad hoc 簽名驗證（macOS 26／Xcode 26.6）。C4/TURZX 的新版自動啟動、退出清理與推論延遲仍需本機實測。
 授權沿用各 upstream；本 repository 不包含模型權重。
 
 <details>
-<summary>原本 v1 說明（保留歷史，啟動與更新方式請以以上為準）</summary>
+<summary>原本 Protocol 2 v1 說明（歷史記錄，版本與更新方式以以上為準）</summary>
 
 # carrotMAC-HUD
 carrotpilot jetlink&HUD for MAC

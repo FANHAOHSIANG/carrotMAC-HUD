@@ -15,6 +15,11 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(prepare.CompatibilityError, '官方 protocol 3'):
             prepare.check_protocol('public static let protocolVersion: UInt16 = 3', 2)
 
+    def test_protocol_three_supported_and_old_server_rejected(self):
+        prepare.check_protocol('public static let protocolVersion: UInt16 = 3', 3)
+        with self.assertRaisesRegex(prepare.CompatibilityError, '官方 protocol 2'):
+            prepare.check_protocol('public static let protocolVersion: UInt16 = 2', 3)
+
     def test_missing_constant_blocked(self):
         with self.assertRaises(prepare.CompatibilityError):
             prepare.check_protocol('changed format', 2)

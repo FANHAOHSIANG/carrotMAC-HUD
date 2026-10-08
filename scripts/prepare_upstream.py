@@ -20,6 +20,15 @@ def check_protocol(source, expected):
         raise CompatibilityError(f'官方 protocol {actual}，目前 HUD/Carrot 配對 protocol {expected}；保留現有版本。')
 
 
+def overlay_patches(root, protocol):
+    if protocol == 3:
+        directory = root / 'overlays/protocol3'
+        return (directory / 'jetlink-mac-hud.patch', directory / 'jetlink-autostart.patch')
+    if protocol == 2:
+        return (root / 'v1/jetlink-mac-hud.patch', root / 'AppAutostart/jetlink-autostart.patch')
+    raise CompatibilityError(f'尚未適配 protocol {protocol}。')
+
+
 def run(*args):
     return subprocess.run([str(x) for x in args], check=True, capture_output=True, text=True)
 
@@ -37,7 +46,7 @@ def prepare(root, destination, reference):
     sha = run('git', '-C', destination, 'rev-parse', 'HEAD').stdout.strip()
     pinned = destination / 'JetlinkKit/Sources/JetlinkKit/Pinned.swift'
     check_protocol(pinned.read_text(), versions['protocol'])
-    for patch in (root / 'v1/jetlink-mac-hud.patch', root / 'AppAutostart/jetlink-autostart.patch'):
+    for patch in overlay_patches(root, versions['protocol']):
         run('git', '-C', destination, 'apply', '--check', patch)
         run('git', '-C', destination, 'apply', patch)
     versions['jetlink_revision'] = sha

@@ -29,7 +29,12 @@ prepare_repo() {
     git -C "$directory" apply "$patch"
   fi
 }
-prepare_repo "$BASE/jetlink" https://github.com/zoompilot/jetlink.git "$JETLINK_REV" "$HERE/jetlink-mac-hud.patch"
+HUD_PATCH="$HERE/jetlink-mac-hud.patch"
+PROTOCOL="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["protocol"])' "$HERE/../versions.json")"
+if [[ "$PROTOCOL" == 3 ]]; then
+  HUD_PATCH="$HERE/../overlays/protocol3/jetlink-mac-hud.patch"
+fi
+prepare_repo "$BASE/jetlink" https://github.com/zoompilot/jetlink.git "$JETLINK_REV" "$HUD_PATCH"
 prepare_repo "$BASE/carrot" https://github.com/ajouatom/openpilot.git "$CARROT_REV" "$HERE/carrot-mac-helper.patch"
 bash "$BASE/carrot/tools/jetlink/setup_mac_hud.sh"
 # Compile the actual Swift package and extension tests before building the App.
