@@ -1,5 +1,5 @@
 diff --git a/openpilot/selfdrive/modeld/jetlink/daemon.py b/openpilot/selfdrive/modeld/jetlink/daemon.py
-index f71532a..a3041aa 100644
+index f71532a..d2292e7 100644
 --- a/openpilot/selfdrive/modeld/jetlink/daemon.py
 +++ b/openpilot/selfdrive/modeld/jetlink/daemon.py
 @@ -35,6 +35,7 @@ SESSION_DETACHED = False
@@ -45,8 +45,8 @@ index f71532a..a3041aa 100644
              # modeld already has its reply. Drain only a bounded ready tail;
              # never add these fragments before infer_end or delay its reply.
              send_ready_after_reply(client, publisher, fast_receiver=peer.get(PUMP_CAPABILITY) is True)
-+            # Optional 32 KiB map preview, only after the model reply.
-+            publish_map(client, publisher)
++          # Optional 32 KiB map preview, only after the model reply.
++          publish_map(client, publisher)
            tail_done = time.monotonic()
            if wifi is not None:
              wifi.send(client)
