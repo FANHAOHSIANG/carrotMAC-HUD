@@ -38,7 +38,7 @@ must be available. For mode-7 camera preview with ClusterHud=0, the separate
 
 ## Protocol
 
-HELLO capability `carrot_map_v1`; message ID `0x4002` on the existing USB link.
+HELLO capability `carrot_map_v1`; message ID `0x4004` on the existing USB link.
 Wire payload is `<4sQB`: `CM01`, uint64 sequence, uint8 valid; valid=1 is
 followed by a 256×256 JPEG; valid=0 is an explicit clear with no image.
 Maximum payload is 32768 bytes. Encoding runs in a normal-priority C4 child,
