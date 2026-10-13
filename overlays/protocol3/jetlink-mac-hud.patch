@@ -127,7 +127,7 @@ index 0000000..935a6f5
 +  static let shared = CarrotHUD()
 +  static let hudType: UInt16 = 0x4000
 +  static let naviType: UInt16 = 0x4001
-+  static let mapType: UInt16 = 0x4002
++  static let mapType: UInt16 = 0x4004
 +  static let maxBytes = 512 * 1024
 +  static let directory: URL = {
 +    if let path = ProcessInfo.processInfo.environment["CARROT_HUD_DIR"] {
