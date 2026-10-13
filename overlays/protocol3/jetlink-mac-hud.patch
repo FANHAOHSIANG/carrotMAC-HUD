@@ -1,9 +1,122 @@
+diff --git a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
+index 9b1a7d0..270d55e 100644
+--- a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
++++ b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
+@@ -112,7 +112,16 @@ public final class EngineHost: @unchecked Sendable {
+   public init(cache: ServerCache, hooks: ServerHooks = ServerHooks()) {
+     self.cache = cache
+     self.hooks = hooks
++    #if os(macOS)
++    let source = hooks.telemetry
++    telemetry = TelemetrySampler {
++      var sample = source()
++      for (key, value) in CarrotHUD.telemetry() { sample[key] = value }
++      return sample
++    }
++    #else
+     telemetry = TelemetrySampler(source: hooks.telemetry)
++    #endif
+   }
+ 
+   deinit {
+diff --git a/JetlinkKit/Sources/JetlinkServer/Session.swift b/JetlinkKit/Sources/JetlinkServer/Session.swift
+index d8d8715..a78cdfd 100644
+--- a/JetlinkKit/Sources/JetlinkServer/Session.swift
++++ b/JetlinkKit/Sources/JetlinkServer/Session.swift
+@@ -7,6 +7,11 @@ import JetlinkRegistry
+ /// thread so progress keeps flowing. The inference path neither allocates
+ /// nor logs on the way to the reply.
+ final class Session: @unchecked Sendable {
++  #if os(macOS)
++  private let carrotHUDOwner = UUID()
++  private var carrotHUDEnabled = false
++  #endif
++
+   private let transport: any MessageLink
+   private let host: EngineHost
+   private let log = ServerLog(category: "session")
+@@ -100,6 +105,10 @@ final class Session: @unchecked Sendable {
+ 
+   /// The connection is gone. The engine stays.
+   func close() {
++    #if os(macOS)
++    CarrotHUD.shared.release(carrotHUDOwner)
++    carrotHUDEnabled = false
++    #endif
+     host.lock.lock()
+     if host.session === self {
+       host.session = nil
+@@ -164,6 +173,20 @@ final class Session: @unchecked Sendable {
+   }
+ 
+   func handle(_ message: Message) throws {
++    #if os(macOS)
++    if message.msgType == CarrotHUD.hudType || message.msgType == CarrotHUD.naviType || message.msgType == CarrotHUD.mapType {
++      guard greeted, carrotHUDEnabled, message.seq > lastSeq else { return }
++      lastSeq = message.seq
++      if message.msgType == CarrotHUD.hudType {
++        CarrotHUD.shared.accept(message.payload, owner: carrotHUDOwner)
++      } else if message.msgType == CarrotHUD.mapType {
++        CarrotHUD.shared.acceptMap(message.payload, owner: carrotHUDOwner)
++      } else {
++        CarrotHUD.shared.forward(message.payload, owner: carrotHUDOwner)
++      }
++      return
++    }
++    #endif
+     guard let type = Wire.Msg(rawValue: message.msgType) else {
+       try error(message.seq, "unknown_message", "type \(message.msgType)")
+       return
+@@ -278,6 +301,13 @@ final class Session: @unchecked Sendable {
+       response["frame_port"] = Int(offer.port)
+       response["frame_token"] = Int(offer.token)
+     }
++    #if os(macOS)
++    carrotHUDEnabled = CarrotHUD.shared.claim(carrotHUDOwner)
++    response["carrot_hud_v1"] = carrotHUDEnabled
++    response["carrot_navi_v1"] = carrotHUDEnabled
++    response["carrot_map_v1"] = carrotHUDEnabled
++    response["carrot_host"] = "mac"
++    #endif
+     try sendJSON(.helloResp, seq: message.seq, response)
+   }
+ 
+diff --git a/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift b/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
+index a76b15c..07ac6c3 100644
+--- a/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
++++ b/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
+@@ -77,9 +77,12 @@ struct ServerHooksTests {
+ 
+   @Test("The hello carries Python's keys, the host's sleep_after and what the backend adds")
+   func hello() throws {
+-    let python: Set = [
++    var python: Set = [
+       "protocol", "backend", "runtime_version", "device", "engine_state", "loaded", "frames_served", "cached_models", "telemetry", "sleep_after",
+     ]
++    #if os(macOS)
++    python.formUnion(["carrot_hud_v1", "carrot_navi_v1", "carrot_map_v1", "carrot_host"])
++    #endif
+     try serve(hooks: ServerHooks()) { _, client in
+       let hello = try client.hello()
+       #expect(Set(hello.keys) == python)
+@@ -99,7 +102,10 @@ struct ServerHooksTests {
+     let golden = try Golden("tiny_stateful")
+     let hooks = ServerHooks(telemetry: { ["temp_c": 51.5, "power_w": 12.25] })
+     func readings(_ object: Any?) -> [String: Double]? {
+-      (object as? [String: Any])?.compactMapValues { ($0 as? NSNumber)?.doubleValue }
++      // The display extension adds a Bool heartbeat; retain the exact
++      // numeric sensor assertions, excluding only that named extension key.
++      (object as? [String: Any])?.filter { $0.key != "carrot_hud_connected" }
++        .compactMapValues { ($0 as? NSNumber)?.doubleValue }
+     }
+     try serve(hooks: hooks) { server, client in
+       // The server samples the host's sensors on a thread of its own, when
 diff --git a/JetlinkKit/Sources/JetlinkServer/CarrotHUD.swift b/JetlinkKit/Sources/JetlinkServer/CarrotHUD.swift
 new file mode 100644
-index 0000000..6485b36
+index 0000000..935a6f5
 --- /dev/null
 +++ b/JetlinkKit/Sources/JetlinkServer/CarrotHUD.swift
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,156 @@
 +#if os(macOS)
 +import Foundation
 +import Darwin
@@ -14,6 +127,7 @@ index 0000000..6485b36
 +  static let shared = CarrotHUD()
 +  static let hudType: UInt16 = 0x4000
 +  static let naviType: UInt16 = 0x4001
++  static let mapType: UInt16 = 0x4002
 +  static let maxBytes = 512 * 1024
 +  static let directory: URL = {
 +    if let path = ProcessInfo.processInfo.environment["CARROT_HUD_DIR"] {
@@ -26,6 +140,7 @@ index 0000000..6485b36
 +  private let condition = NSCondition()
 +  private var owner: UUID?
 +  private var pending: (UUID, Double, Data)?
++  private var pendingMap: (UUID, Double, Data)?
 +  private let udp: Int32
 +  private let log = ServerLog(category: "carrot-hud")
 +
@@ -44,12 +159,13 @@ index 0000000..6485b36
 +    guard owner == nil || owner == id else { return false }
 +    owner = id
 +    pending = nil
++    pendingMap = nil
 +    return true
 +  }
 +
 +  func release(_ id: UUID) {
 +    condition.lock()
-+    if owner == id { owner = nil; pending = nil }
++    if owner == id { owner = nil; pending = nil; pendingMap = nil }
 +    condition.unlock()
 +    // Snapshot age expires in 0.5s even if an in-flight write just finished.
 +  }
@@ -61,6 +177,20 @@ index 0000000..6485b36
 +    condition.lock()
 +    if owner == id {
 +      pending = (id, stamp, copy)
++      condition.signal()
++    }
++    condition.unlock()
++  }
++
++  func acceptMap(_ payload: UnsafeRawBufferPointer, owner id: UUID) {
++    guard (13...32768).contains(payload.count) else { return }
++    let bytes = Data(payload)
++    guard bytes.prefix(4) == Data("CM01".utf8),
++          (bytes[12] == 0 && bytes.count == 13) ||
++          (bytes[12] == 1 && bytes.count > 15 && bytes[13] == 0xff && bytes[14] == 0xd8) else { return }
++    condition.lock()
++    if owner == id {
++      pendingMap = (id, Date().timeIntervalSince1970, bytes)
 +      condition.signal()
 +    }
 +    condition.unlock()
@@ -103,13 +233,24 @@ index 0000000..6485b36
 +    var nextError = 0.0
 +    while true {
 +      condition.lock()
-+      while pending == nil { condition.wait() }
-+      let (id, received, payload) = pending!
-+      pending = nil
++      while pending == nil && pendingMap == nil { condition.wait() }
++      let isMap = pending == nil
++      let (id, received, payload) = isMap ? pendingMap! : pending!
++      if isMap { pendingMap = nil } else { pending = nil }
 +      let allowed = owner == id
 +      condition.unlock()
 +      guard allowed, (0..<0.5).contains(Date().timeIntervalSince1970 - received) else { continue }
 +      do {
++        if isMap {
++          try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true,
++                                                  attributes: [.posixPermissions: 0o700])
++          var stamp = received.bitPattern.littleEndian
++          var packet = Data()
++          withUnsafeBytes(of: &stamp) { packet.append(contentsOf: $0) }
++          packet.append(payload)
++          try packet.write(to: Self.directory.appendingPathComponent("map.packet"), options: .atomic)
++          continue
++        }
 +        guard let record = try JSONSerialization.jsonObject(with: payload) as? [String: Any],
 +              record["version"] as? Int == 1,
 +              record["sent"] is NSNumber,
@@ -132,92 +273,12 @@ index 0000000..6485b36
 +  }
 +}
 +#endif
-diff --git a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
-index 9b1a7d0..270d55e 100644
---- a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
-+++ b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
-@@ -112,7 +112,16 @@ public final class EngineHost: @unchecked Sendable {
-   public init(cache: ServerCache, hooks: ServerHooks = ServerHooks()) {
-     self.cache = cache
-     self.hooks = hooks
-+    #if os(macOS)
-+    let source = hooks.telemetry
-+    telemetry = TelemetrySampler {
-+      var sample = source()
-+      for (key, value) in CarrotHUD.telemetry() { sample[key] = value }
-+      return sample
-+    }
-+    #else
-     telemetry = TelemetrySampler(source: hooks.telemetry)
-+    #endif
-   }
- 
-   deinit {
-diff --git a/JetlinkKit/Sources/JetlinkServer/Session.swift b/JetlinkKit/Sources/JetlinkServer/Session.swift
-index d8d8715..f538bef 100644
---- a/JetlinkKit/Sources/JetlinkServer/Session.swift
-+++ b/JetlinkKit/Sources/JetlinkServer/Session.swift
-@@ -7,6 +7,11 @@ import JetlinkRegistry
- /// thread so progress keeps flowing. The inference path neither allocates
- /// nor logs on the way to the reply.
- final class Session: @unchecked Sendable {
-+  #if os(macOS)
-+  private let carrotHUDOwner = UUID()
-+  private var carrotHUDEnabled = false
-+  #endif
-+
-   private let transport: any MessageLink
-   private let host: EngineHost
-   private let log = ServerLog(category: "session")
-@@ -100,6 +105,10 @@ final class Session: @unchecked Sendable {
- 
-   /// The connection is gone. The engine stays.
-   func close() {
-+    #if os(macOS)
-+    CarrotHUD.shared.release(carrotHUDOwner)
-+    carrotHUDEnabled = false
-+    #endif
-     host.lock.lock()
-     if host.session === self {
-       host.session = nil
-@@ -164,6 +173,18 @@ final class Session: @unchecked Sendable {
-   }
- 
-   func handle(_ message: Message) throws {
-+    #if os(macOS)
-+    if message.msgType == CarrotHUD.hudType || message.msgType == CarrotHUD.naviType {
-+      guard greeted, carrotHUDEnabled, message.seq > lastSeq else { return }
-+      lastSeq = message.seq
-+      if message.msgType == CarrotHUD.hudType {
-+        CarrotHUD.shared.accept(message.payload, owner: carrotHUDOwner)
-+      } else {
-+        CarrotHUD.shared.forward(message.payload, owner: carrotHUDOwner)
-+      }
-+      return
-+    }
-+    #endif
-     guard let type = Wire.Msg(rawValue: message.msgType) else {
-       try error(message.seq, "unknown_message", "type \(message.msgType)")
-       return
-@@ -278,6 +299,12 @@ final class Session: @unchecked Sendable {
-       response["frame_port"] = Int(offer.port)
-       response["frame_token"] = Int(offer.token)
-     }
-+    #if os(macOS)
-+    carrotHUDEnabled = CarrotHUD.shared.claim(carrotHUDOwner)
-+    response["carrot_hud_v1"] = carrotHUDEnabled
-+    response["carrot_navi_v1"] = carrotHUDEnabled
-+    response["carrot_host"] = "mac"
-+    #endif
-     try sendJSON(.helloResp, seq: message.seq, response)
-   }
- 
 diff --git a/JetlinkKit/Tests/JetlinkServerTests/CarrotHUDTests.swift b/JetlinkKit/Tests/JetlinkServerTests/CarrotHUDTests.swift
 new file mode 100644
-index 0000000..64bc5fc
+index 0000000..9fd2444
 --- /dev/null
 +++ b/JetlinkKit/Tests/JetlinkServerTests/CarrotHUDTests.swift
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,134 @@
 +#if os(macOS)
 +import Foundation
 +import Darwin
@@ -263,6 +324,29 @@ index 0000000..64bc5fc
 +      #expect(CarrotHUD.telemetry()["carrot_hud_connected"] as? Bool == expected)
 +    }
 +  }
++  @Test("Map packets are bounded, owner guarded, and preserve clear messages")
++  func mapPacket() throws {
++    let bridge = CarrotHUD.shared
++    let id = UUID()
++    #expect(bridge.claim(id))
++    defer { bridge.release(id) }
++    let path = CarrotHUD.directory.appendingPathComponent("map.packet")
++    try? FileManager.default.removeItem(at: path)
++    var clear = Data("CM01".utf8)
++    clear.append(contentsOf: [1, 0, 0, 0, 0, 0, 0, 0, 0])
++    clear.withUnsafeBytes { bridge.acceptMap($0, owner: UUID()) }
++    #expect(!FileManager.default.fileExists(atPath: path.path))
++    Data(repeating: 0, count: 32769).withUnsafeBytes { bridge.acceptMap($0, owner: id) }
++    #expect(!FileManager.default.fileExists(atPath: path.path))
++    clear.withUnsafeBytes { bridge.acceptMap($0, owner: id) }
++    let deadline = Date().addingTimeInterval(2)
++    while !FileManager.default.fileExists(atPath: path.path), Date() < deadline {
++      Thread.sleep(forTimeInterval: 0.01)
++    }
++    let packet = try Data(contentsOf: path)
++    #expect(packet.dropFirst(8) == clear)
++  }
++
 +  @Test("Protocol 3 HELLO advertises HUD, display packets are silent and replay guarded")
 +  func session() throws {
 +    let temp = try TemporaryDirectory()
@@ -291,6 +375,7 @@ index 0000000..64bc5fc
 +    #expect(hello["protocol"] as? Int == 3)
 +    #expect(hello["carrot_hud_v1"] as? Bool == true)
 +    #expect(hello["carrot_navi_v1"] as? Bool == true)
++    #expect(hello["carrot_map_v1"] as? Bool == true)
 +    #expect(hello["carrot_host"] as? String == "mac")
 +    try deliver(CarrotHUD.hudType, 2, payload) // replay must not write
 +    #expect(!FileManager.default.fileExists(atPath: path.path))
@@ -328,33 +413,3 @@ index 0000000..64bc5fc
 +  func close() {}
 +}
 +#endif
-diff --git a/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift b/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
-index a76b15c..f3f3b32 100644
---- a/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
-+++ b/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
-@@ -77,9 +77,12 @@ struct ServerHooksTests {
- 
-   @Test("The hello carries Python's keys, the host's sleep_after and what the backend adds")
-   func hello() throws {
--    let python: Set = [
-+    var python: Set = [
-       "protocol", "backend", "runtime_version", "device", "engine_state", "loaded", "frames_served", "cached_models", "telemetry", "sleep_after",
-     ]
-+    #if os(macOS)
-+    python.formUnion(["carrot_hud_v1", "carrot_navi_v1", "carrot_host"])
-+    #endif
-     try serve(hooks: ServerHooks()) { _, client in
-       let hello = try client.hello()
-       #expect(Set(hello.keys) == python)
-@@ -99,7 +102,10 @@ struct ServerHooksTests {
-     let golden = try Golden("tiny_stateful")
-     let hooks = ServerHooks(telemetry: { ["temp_c": 51.5, "power_w": 12.25] })
-     func readings(_ object: Any?) -> [String: Double]? {
--      (object as? [String: Any])?.compactMapValues { ($0 as? NSNumber)?.doubleValue }
-+      // The display extension adds a Bool heartbeat; retain the exact
-+      // numeric sensor assertions, excluding only that named extension key.
-+      (object as? [String: Any])?.filter { $0.key != "carrot_hud_connected" }
-+        .compactMapValues { ($0 as? NSNumber)?.doubleValue }
-     }
-     try serve(hooks: hooks) { server, client in
-       // The server samples the host's sensors on a thread of its own, when
