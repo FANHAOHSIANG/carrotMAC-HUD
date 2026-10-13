@@ -39,6 +39,7 @@ jobs:
       promote: ${{ steps.select.outputs.promote }}
     steps:
       - uses: actions/checkout@v4
+      - run: python3 -m pip install Pillow
       - name: Test compatibility guard
         run: python3 -m unittest discover -s tests -v
       - name: Resolve immutable official release or pinned test source
