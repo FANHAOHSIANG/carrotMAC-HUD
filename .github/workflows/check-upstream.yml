@@ -52,6 +52,15 @@ jobs:
         env:
           UPSTREAM_REF: ${{ steps.select.outputs.ref }}
         run: python3 scripts/prepare_upstream.py --ref "$UPSTREAM_REF"
+      - name: Check navigation wire contract
+        if: steps.select.outputs.prepare == 'true'
+        run: |
+          python3 - <<'PYCODE'
+          import json, subprocess
+          report = json.load(open('upstream-report.json'))
+          if report['status'] == 'ready':
+              subprocess.run(['python3', 'scripts/check_nav_contract.py', 'candidate-jetlink'], check=True)
+          PYCODE
       - name: Record compatibility result
         id: report
         if: steps.select.outputs.prepare == 'true'
@@ -105,6 +114,7 @@ jobs:
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter CarrotHUDTests
       - name: Verify protocol-3 queued and stateful model inference
         run: |
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter SpecTests
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ProtocolTests
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter 'ServerTests/'
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ServerHooksTests

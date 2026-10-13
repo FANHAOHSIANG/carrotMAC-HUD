@@ -12,6 +12,14 @@ CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始�
 - 不會因為發布新模型就自動切換；不是清單中的所有模型都符合 Carrot 的規格。READY 代表準備完成，還須確認外接推論啟用與延遲。
 - 實體 Mac/C4/TURZX、真實模型精度、USB 穩定性與持續推論效能仍需停車驗證。
 
+### RL Nav 模型封包支援
+
+更新流程現在會套用 `overlays/protocol3/jetlink-nav-inputs.patch`，在 Mac 的 Swift 與 Python 模型規格加入 stateful 模型的 `nav_map` 和 `navigation`，順序與 carrot-nav 一致。這修正 RL Nav 第一個測試影格回報 `BAD_SHAPE (frame 0)` 的封包長度不符；既有無導航模型的封包保持不變。模型 staging 沿用各端依規格逐欄位填入的流程，不改控制或推論有效性門檻。
+
+退出 Jetlink App 與舊 HUD helper，再執行根目錄 `03-Update.command`。更新使用固定的 Protocol 3 v0.8.5 來源，加上 HUD、自動啟動與導航封包補丁；不更動 C4 或已下載模型。成功後開原本的 App，offroad 選 RL Nav → Use Model，確認 C4 狀態含正確 SHA256，先做離線 Benchmark，再驗證實際影格與延遲。READY 不能代替成功推論或道路驗證。
+
+已新增 Swift 規格回歸測試（舊／新導航向量形狀與 wire order），Mac 更新與 GitHub Actions 都會執行。Linux 環境只驗證補丁、Python 封包布局與一般模型不變；Mac Swift 編譯、CoreML 與 C4 連線仍需 macOS CI／M4 實測。若出現新錯誤請保留完整日誌，不要繞過規格驗證。
+
 ### C4 攝影機預覽補丁
 
 新 Carrot 的 `hud_protocol.py` 仍只把 Jetson 的顯示 heartbeat 當成遠端攝影機預覽需求。

@@ -43,13 +43,14 @@ def main():
             raise ValueError('請先完成 v1 安裝。')
         candidate = root.parent / 'candidate-jetlink'
         prepare(root, candidate, versions['jetlink_revision'])
+        run(sys.executable, root / 'scripts/check_nav_contract.py', candidate)
         new_helper = root / 'AppAutostart/mac_hud_supervisor.py'
         compile(new_helper.read_text(), str(new_helper), 'exec')
         import os
         env = dict(os.environ, CARROT_HUD_DIR=str(root.parent / 'test-hud-runtime'),
                    JETLINK_VERSION=versions['jetlink_version'])
         run('swift', 'test', '--package-path', candidate / 'JetlinkKit', '--filter', 'CarrotHUDTests', env=env)
-        for suite in ('ProtocolTests', 'ServerTests/', 'ServerHooksTests'):
+        for suite in ('SpecTests', 'ProtocolTests', 'ServerTests/', 'ServerHooksTests'):
             run('swift', 'test', '--package-path', candidate / 'JetlinkKit', '--filter', suite, env=env)
         run('make', '-C', candidate / 'macos', 'app', env=env)
         new_app = candidate / 'macos/build/Jetlink.app'
