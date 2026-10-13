@@ -32,6 +32,10 @@ class MapChannelTests(unittest.TestCase):
         data = self.jpeg if data is None else data
         (self.root / 'map.packet').write_bytes(struct.pack('<d4sQB', stamp, magic, 1, valid) + data)
 
+    def test_map_id_keeps_existing_wifi_and_startup_ids_free(self):
+        self.assertEqual(sender.MESSAGE, 0x4004)
+        self.assertNotIn(sender.MESSAGE, (0x4000, 0x4001, 0x4002, 0x4003))
+
     def test_sender_to_mac_roundtrip_and_invalid_route_clear(self):
         from PIL import Image
         source = self.root / 'map.png'
