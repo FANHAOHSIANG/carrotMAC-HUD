@@ -8,7 +8,7 @@ import sys
 import time
 
 CAPABILITY = 'carrot_map_v1'
-MESSAGE = 0x4002
+MESSAGE = 0x4004
 HEADER = struct.Struct('<4sQB')
 STAMP = struct.Struct('<d')
 MAX_BYTES = 32 * 1024
