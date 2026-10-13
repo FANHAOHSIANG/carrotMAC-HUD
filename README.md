@@ -2,6 +2,13 @@
 
 CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始碼補丁、Mac 更新腳本與官方更新檢查，不需要另外建立名為 jetlink 的 Fork。
 
+## carrot-nav 模式 7 地圖通道（測試分支）
+
+已加入 C4 地圖影像發送、JetLink App 接收與 Mac 模式 7 右側地圖版面。
+請使用本分支的 **05-Update-Map.command**；C4 也需安裝發送端。
+完整更新、備份、相容版本與驗證限制見 [地圖通道說明](overlays/map-channel/README.md)。
+目前是測試候選，實體影像與推論延遲仍待停車驗證。
+
 ## Protocol 3 更新版
 
 - JetLink：`4b747aebad3d8d96ab26d76f1668f2b2ecb1b667`（官方 v0.8.5、Protocol 3；後續固定版本以 versions.json 為準）。

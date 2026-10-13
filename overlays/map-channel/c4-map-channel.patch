@@ -1,0 +1,109 @@
+diff --git a/openpilot/selfdrive/modeld/jetlink/daemon.py b/openpilot/selfdrive/modeld/jetlink/daemon.py
+index f71532a..d2292e7 100644
+--- a/openpilot/selfdrive/modeld/jetlink/daemon.py
++++ b/openpilot/selfdrive/modeld/jetlink/daemon.py
+@@ -35,6 +35,7 @@ SESSION_DETACHED = False
+ log = logging.getLogger('carrot.jetlink')
+ sys.path.insert(0, str(VENDOR.parents[1] / 'tools/jetlink'))
+ from hud_protocol import Publisher, HUD_CAPABILITY, HUD_MESSAGE
++from hud_map import CAPABILITY as MAP_CAPABILITY, MESSAGE as MAP_MESSAGE
+ from hud_navi import CAPABILITY as NAVI_CAPABILITY, MESSAGE as NAVI_MESSAGE
+ from hud_navi import send_ready_after_reply, PUMP_CAPABILITY
+ from wifi_protocol import CAPABILITY as WIFI_CAPABILITY, Publisher as WifiPublisher
+@@ -76,6 +77,13 @@ def publish_hud(client, publisher):
+       client.t.send(NAVI_MESSAGE, client._next_seq(), [media])
+ 
+ 
++def publish_map(client, publisher):
++  if publisher is not None:
++    packet = publisher.map_packet()
++    if packet:
++      client.t.send(MAP_MESSAGE, client._next_seq(), [packet])
++
++
+ def host_attached():
+   global SESSION_DETACHED
+   attached = _role_attached()
+@@ -179,7 +187,7 @@ class CarrotTransport(FfsTransport):
+ 
+ 
+ def serve_local(listener, client, peer, wifi=None):
+-  publisher = Publisher(navi=bool(peer.get(NAVI_CAPABILITY))) if peer.get(HUD_CAPABILITY) else None
++  publisher = Publisher(navi=bool(peer.get(NAVI_CAPABILITY)), map_preview=peer.get(MAP_CAPABILITY) is True) if peer.get(HUD_CAPABILITY) else None
+   phase = PhasePublisher()
+   try:
+     _serve_local(listener, client, peer, publisher, phase, wifi)
+@@ -218,6 +226,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
+       if wifi is not None:
+         wifi.send(client)
+       publish_hud(client, publisher)
++      publish_map(client, publisher)
+       if time.monotonic() - last_ping > 2:
+         client.last_state = client.state()
+         check_loaded(client, client.last_state)
+@@ -296,6 +305,8 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
+             # modeld already has its reply. Drain only a bounded ready tail;
+             # never add these fragments before infer_end or delay its reply.
+             send_ready_after_reply(client, publisher, fast_receiver=peer.get(PUMP_CAPABILITY) is True)
++          # Optional 32 KiB map preview, only after the model reply.
++          publish_map(client, publisher)
+           tail_done = time.monotonic()
+           if wifi is not None:
+             wifi.send(client)
+diff --git a/tools/jetlink/hud_protocol.py b/tools/jetlink/hud_protocol.py
+index 1fe5459..c17acf9 100644
+--- a/tools/jetlink/hud_protocol.py
++++ b/tools/jetlink/hud_protocol.py
+@@ -28,7 +28,7 @@ PARAMS = ('ClusterHud', 'ClusterHudDebug', 'ClusterHudBrightness', 'ClusterHudOr
+ 
+ class Publisher:
+   """Keep cereal decoding, JSON and preview work outside the USB owner's GIL."""
+-  def __init__(self, navi=False):
++  def __init__(self, navi=False, map_preview=False):
+     import os
+     self.media_socket = self.media_process = None
+     if navi:
+@@ -41,6 +41,13 @@ class Publisher:
+       finally:
+         child.close()
+     self.path = Path(f'/dev/shm/carrot-jetlink-display-{os.getpid()}.packet')
++    self.map_path = self.path.with_name(self.path.stem + '-map.packet')
++    self.map_last_sent = 0.
++    self.map_process = None
++    if map_preview:
++      self.map_process = subprocess.Popen(['chrt', '--other', '0', sys.executable,
++        str(Path(__file__).with_name('hud_map.py')), str(self.map_path)],
++        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+     self.last_sent = 0.
+     self.process = subprocess.Popen(['chrt', '--other', '0', sys.executable,
+                                     str(Path(__file__).with_name('hud_publisher.py')), str(self.path)],
+@@ -55,6 +62,13 @@ class Publisher:
+         pass
+     return None
+ 
++  def map_packet(self):
++    if self.map_process is None:
++      return None
++    from hud_map import read_latest
++    self.map_last_sent, packet = read_latest(self.map_path, self.map_last_sent)
++    return packet
++
+   def packet(self):
+     try:
+       with self.path.open('rb') as f:
+@@ -70,6 +84,15 @@ class Publisher:
+       return None
+ 
+   def close(self):
++    if self.map_process is not None:
++      self.map_process.terminate()
++      try:
++        self.map_process.wait(timeout=1)
++      except subprocess.TimeoutExpired:
++        self.map_process.kill()
++        self.map_process.wait(timeout=1)
++    self.map_path.unlink(missing_ok=True)
++    self.map_path.with_suffix('.tmp').unlink(missing_ok=True)
+     if self.media_process is not None:
+       self.media_process.terminate()
+       try:

@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from prepare_upstream import prepare
+from map_helper import prepare_map_helper, install_map_helper, restore_map_helper
 from mac_install import install_pair, restore_pair, run, revision
 
 
@@ -32,6 +33,7 @@ def main():
             if not backup.resolve().is_relative_to((base / 'backups').resolve()):
                 raise ValueError('備份路徑不正確。')
             restore_pair(backup, app, helper)
+            restore_map_helper(base / "carrot", backup)
             print('已還原 App 與 helper。')
             return
         versions = json.loads((root / 'versions.json').read_text())
@@ -41,6 +43,7 @@ def main():
             raise ValueError('Carrot helper 原始碼版本不符，保留舊 App。')
         if not app.is_dir():
             raise ValueError('請先完成 v1 安裝。')
+        map_stage = prepare_map_helper(root, base / 'carrot', root.parent / 'candidate-map-helper')
         candidate = root.parent / 'candidate-jetlink'
         prepare(root, candidate, versions['jetlink_revision'])
         new_helper = root / 'AppAutostart/mac_hud_supervisor.py'
@@ -56,6 +59,11 @@ def main():
         run('codesign', '--verify', '--deep', '--strict', new_app)
         backup = base / 'backups' / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
         install_pair(new_app, new_helper, app, helper, backup)
+        try:
+            install_map_helper(map_stage, base / 'carrot', backup)
+        except Exception:
+            restore_pair(backup, app, helper)
+            raise
         (state / 'last-backup.json').write_text(json.dumps({'backup': str(backup), 'revision': versions['jetlink_revision']}))
         print(f'更新完成，舊版備份：{backup}\n之後直接開原本的修改版 Jetlink.app。')
         run('open', app.parent)
