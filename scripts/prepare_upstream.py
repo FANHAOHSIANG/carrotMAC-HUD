@@ -23,7 +23,7 @@ def check_protocol(source, expected):
 def overlay_patches(root, protocol):
     if protocol == 3:
         directory = root / 'overlays/protocol3'
-        return (directory / 'jetlink-mac-hud.patch', directory / 'jetlink-autostart.patch')
+        return (directory / 'jetlink-mac-hud.patch', directory / 'jetlink-autostart.patch', directory / 'jetlink-nav-inputs.patch')
     if protocol == 2:
         return (root / 'v1/jetlink-mac-hud.patch', root / 'AppAutostart/jetlink-autostart.patch')
     raise CompatibilityError(f'尚未適配 protocol {protocol}。')

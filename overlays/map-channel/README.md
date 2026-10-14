@@ -6,6 +6,9 @@ This is a display preview of the C4 map, not a replacement for model map input.
 
 ## Mac update
 
+The map update also includes the RL Nav `nav_map`/`navigation` model-input
+fix and runs its Python contract check and Swift SpecTests before installation.
+
 Download the `feature/nav-map-hud` branch, quit JetLink and any old HUD helper,
 then execute **05-Update-Map.command**. It builds the customized JetLink App,
 runs Swift tests, and installs the App, supervisor and map renderer together.

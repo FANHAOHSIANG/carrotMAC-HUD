@@ -1,0 +1,61 @@
+diff --git a/JetlinkKit/Sources/JetlinkServer/ModelSpec.swift b/JetlinkKit/Sources/JetlinkServer/ModelSpec.swift
+index 76381c9..382e738 100644
+--- a/JetlinkKit/Sources/JetlinkServer/ModelSpec.swift
++++ b/JetlinkKit/Sources/JetlinkServer/ModelSpec.swift
+@@ -155,7 +155,12 @@ public struct ModelSpec: Sendable, Equatable {
+     ]
+     if stateful {
+       // the pulse is the graph's own input
+-      return [NamedShape("desire", [(input("desire") ?? []).reduce(1, *)])] + scalars
++      // Match Carrot's stateful wire order, including navigation models.
++      let navigation = ["nav_map", "navigation"].compactMap { name -> NamedShape? in
++        guard let shape = input(name) else { return nil }
++        return NamedShape(name, shape)
++      }
++      return [NamedShape("desire", [(input("desire") ?? []).reduce(1, *)])] + scalars + navigation
+     }
+     let dp = input("desire_pulse") ?? [0, 0, 0]
+     return [NamedShape("desire", [dp.count > 2 ? dp[2] : 0])] + scalars
+diff --git a/JetlinkKit/Tests/JetlinkServerTests/SpecTests.swift b/JetlinkKit/Tests/JetlinkServerTests/SpecTests.swift
+index 059f9bd..5312949 100644
+--- a/JetlinkKit/Tests/JetlinkServerTests/SpecTests.swift
++++ b/JetlinkKit/Tests/JetlinkServerTests/SpecTests.swift
+@@ -39,6 +39,24 @@ struct SpecTests {
+     #expect(stateful.inferRespBytes == Wire.inferRespSize + 4 * 48)
+   }
+ 
++
++  @Test("Carrot navigation frames include the map and maneuver in wire order", arguments: [[47], [1, 47]])
++  func navigationWire(_ navigationShape: [Int]) throws {
++    let base = try ModelSpec.from(Fixture.json("tiny_stateful.spec.json"))
++    // Deliberately reverse declaration order: wire order must be canonical.
++    let spec = ModelSpec(
++      sha256: base.sha256, nbytes: base.nbytes, frameSkip: base.frameSkip,
++      inputShapes: base.inputShapes + [NamedShape("navigation", navigationShape), NamedShape("nav_map", [1, 1, 256, 256])],
++      outputShapes: base.outputShapes, outputSlices: base.outputSlices, checkpoint: base.checkpoint)
++    #expect(spec.packedShapes.map(\.name) == ["desire", "traffic_convention", "action_t", "nav_map", "navigation"])
++    #expect(spec.packedCount == base.packedCount + 65_536 + 47)
++    #expect(spec.inferReqBytes == base.inferReqBytes + 262_332)
++    let layout = Dictionary(uniqueKeysWithValues: spec.packedLayout.map { ($0.name, $0.range) })
++    #expect(layout["nav_map"] == base.packedCount..<(base.packedCount + 65_536))
++    #expect(layout["navigation"] == (base.packedCount + 65_536)..<(base.packedCount + 65_536 + 47))
++    #expect(try ModelSpec.from(spec.dictionary()).packedShapes == spec.packedShapes)
++  }
++
+   /// Lebowski's pad is `slice(-2, None)`, which its sidecar and ENGINE_RESP
+   /// carry as `[-2, null]`. `expected` is jetlink.spec's `to_dict` of this
+   /// spec, `json.dumps(sort_keys=True, separators=(',', ':'))`.
+diff --git a/jetlink/spec.py b/jetlink/spec.py
+index 000c372..40d2274 100644
+--- a/jetlink/spec.py
++++ b/jetlink/spec.py
+@@ -119,7 +119,8 @@ class ModelSpec:
+                'action_t': tuple(self.input_shapes['action_t'])}
+     if self.stateful:
+       # the pulse is the graph's own input
+-      return {'desire': (math.prod(self.input_shapes['desire']),), **scalars}
++      return {'desire': (math.prod(self.input_shapes['desire']),), **scalars,
++              **{name: tuple(self.input_shapes[name]) for name in ('nav_map', 'navigation') if name in self.input_shapes}}
+     return {'desire': (self.input_shapes['desire_pulse'][2],), **scalars}
+ 
+   @property

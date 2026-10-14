@@ -2,14 +2,12 @@ diff --git a/openpilot/selfdrive/modeld/jetlink/daemon.py b/openpilot/selfdrive/
 index f71532a..d2292e7 100644
 --- a/openpilot/selfdrive/modeld/jetlink/daemon.py
 +++ b/openpilot/selfdrive/modeld/jetlink/daemon.py
-@@ -35,6 +35,7 @@ SESSION_DETACHED = False
+@@ -35,4 +35,5 @@ SESSION_DETACHED = False
  log = logging.getLogger('carrot.jetlink')
  sys.path.insert(0, str(VENDOR.parents[1] / 'tools/jetlink'))
  from hud_protocol import Publisher, HUD_CAPABILITY, HUD_MESSAGE
 +from hud_map import CAPABILITY as MAP_CAPABILITY, MESSAGE as MAP_MESSAGE
  from hud_navi import CAPABILITY as NAVI_CAPABILITY, MESSAGE as NAVI_MESSAGE
- from hud_navi import send_ready_after_reply, PUMP_CAPABILITY
- from wifi_protocol import CAPABILITY as WIFI_CAPABILITY, Publisher as WifiPublisher
 @@ -76,6 +77,13 @@ def publish_hud(client, publisher):
        client.t.send(NAVI_MESSAGE, client._next_seq(), [media])
  

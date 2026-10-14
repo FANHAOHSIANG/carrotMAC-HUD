@@ -2,9 +2,9 @@ name: Sync official JetLink releases
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/nav-map-hud]
   push:
-    branches: [main]
+    branches: [main, feature/nav-map-hud]
     paths:
       - 'versions.json'
       - 'scripts/**'
@@ -52,7 +52,9 @@ jobs:
         if: steps.select.outputs.prepare == 'true'
         env:
           UPSTREAM_REF: ${{ steps.select.outputs.ref }}
-        run: python3 scripts/prepare_upstream.py --ref "$UPSTREAM_REF"
+        run: |
+          python3 scripts/prepare_upstream.py --ref "$UPSTREAM_REF"
+          if [ -d candidate-jetlink ]; then python3 scripts/check_nav_contract.py candidate-jetlink; fi
       - name: Record compatibility result
         id: report
         if: steps.select.outputs.prepare == 'true'
@@ -106,6 +108,7 @@ jobs:
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter CarrotHUDTests
       - name: Verify protocol-3 queued and stateful model inference
         run: |
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter SpecTests
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ProtocolTests
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter 'ServerTests/'
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ServerHooksTests
