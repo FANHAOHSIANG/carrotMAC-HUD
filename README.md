@@ -1,5 +1,12 @@
 # carrotMAC-HUD
 
+## hkg Jetlink HUD 測試分支
+
+本分支加入 hkg 車況資料 adapter，使用 **06-HKG-HUD.command** 安裝；
+配對 C4 分支、相容性要求及還原方法見 [hkg HUD 說明](hkg/README.zh-TW.md)。
+此工具沿用既有 HUD-enabled Jetlink App，不替換 App 或模型。
+目前通過離線測試，實體 HUD 畫面與推論延遲仍待停車驗證。
+
 CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始碼補丁、Mac 更新腳本與官方更新檢查，不需要另外建立名為 jetlink 的 Fork。
 
 ## Protocol 3 更新版
@@ -137,4 +144,5 @@ https://github.com/zoompilot/jetlink/commit/51ffd10825d9704f21293dc51d08244e8af8
 補丁套用後的原始碼仍依各 upstream 專案的授權；安裝工具沒有攜帶模型權重。
 
 </details>
+
 

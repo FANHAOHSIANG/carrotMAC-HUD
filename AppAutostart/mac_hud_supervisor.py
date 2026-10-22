@@ -81,8 +81,11 @@ def main():
   env['PYTHONPATH'] = str(root) + (os.pathsep + env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
   env['PATH'] = '/opt/homebrew/bin:/usr/local/bin:' + env.get('PATH', '')
   env['PYTHONUNBUFFERED'] = '1'
-  return supervise([sys.executable, '-u', str(Path(__file__).with_name('hud.py'))], args.parent_pid, DIRECTORY)
+  here = Path(__file__).resolve().parent
+  helper = 'hkg_hud.py' if (here / 'hkg-hud.enabled').is_file() else 'hud.py'
+  return supervise([sys.executable, '-u', str(here / helper)], args.parent_pid, DIRECTORY)
 
 
 if __name__ == '__main__':
   raise SystemExit(main())
+
