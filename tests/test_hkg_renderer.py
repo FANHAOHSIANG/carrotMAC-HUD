@@ -20,6 +20,30 @@ spec.loader.exec_module(hkg)
 
 @unittest.skipUnless(os.environ.get('CARROT_HELPER_ROOT'), 'requires the pinned Carrot helper checkout')
 class RendererTests(unittest.TestCase):
+  def test_pinned_stats_accept_minimal_device_state_and_do_not_invent_metrics(self):
+    helper = Path(os.environ['CARROT_HELPER_ROOT']).resolve()
+    sys.path[:0] = [str(helper / 'tools/jetlink'), str(helper / 'openpilot/selfdrive/carrot/cluster')]
+    import hud_stats
+    sm = hkg.HkgSubMaster(['deviceState'])
+    stats = hud_stats.VehicleSystemStats(sm=sm)
+    overlay = hud_stats.VehicleCpuOverlay(sm=sm)
+    values = {'started': True, 'deviceType': 'mici'}
+    def packet():
+      return time.monotonic(), {'hkg': {'deviceState': values}, 'age': {'deviceState': .01}, '_received_epoch': 1}
+    with patch.object(hkg, 'snapshot', side_effect=packet):
+      result = stats.sample()
+      self.assertIsNone(result.cpu_used_percent)
+      self.assertIsNone(result.memory_used_percent)
+      self.assertIsNone(result.disk_used_percent)
+      self.assertEqual(overlay.sample_text(), 'CPU --')
+      values.update(cpuUsagePercent=[20., 40.], memoryUsagePercent=30., freeSpacePercent=80.)
+      result = stats.sample()
+      self.assertEqual(result.cpu_used_percent, 30.)
+      self.assertEqual(result.memory_used_percent, 30.)
+      self.assertEqual(result.disk_used_percent, 20.)
+    with patch.object(hkg, 'snapshot', return_value=None):
+      self.assertEqual(overlay.sample_text(), 'CPU --')
+
   def test_live_source_renders_fields_and_clears_cached_path_lead_and_lfa(self):
     helper = Path(os.environ['CARROT_HELPER_ROOT']).resolve()
     sys.path[:0] = [str(helper), str(helper / 'openpilot/selfdrive/carrot/cluster')]

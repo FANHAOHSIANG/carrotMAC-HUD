@@ -140,7 +140,8 @@ def main():
       text = diagnostics()
       print(text, flush=True)
       subprocess.run(['pbcopy'], input=text, text=True, check=True)
-      message('診斷已複製，可直接貼到對話中。\n\n' + text[:1200])
+      message('完整診斷已複製到剪貼簿。\n請回到對話按 Command + V 貼上，不必複製這個提示視窗。\n\n'
+              + '\n'.join(text.splitlines()[:3]))
 
 
 if __name__ == '__main__':

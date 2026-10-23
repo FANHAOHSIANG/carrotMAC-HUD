@@ -95,6 +95,11 @@ class HkgSubMaster:
       self.updated[name] = good and (new or not self.alive[name])
       self.valid[name] = self.alive[name] = good
       if good:
+        if name == 'deviceState':
+          # hkg currently forwards started/deviceType only. The pinned HUD
+          # statistics reader accesses these attributes directly. Empty/None
+          # means unavailable; do not invent a zero-percent vehicle reading.
+          item = {'cpuUsagePercent': [], 'memoryUsagePercent': None, 'freeSpacePercent': None, **item}
         self.data[name] = namespace(item)
         self.recv_time[name] = now - record['age'][name]
         self.logMonoTime[name] = int(self.recv_time[name] * 1e9)

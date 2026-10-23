@@ -69,6 +69,18 @@ https://github.com/FANHAOHSIANG/sunnypilot/tree/hkg-enhanced-jetlink-hud
 測試涵蓋方向設定保存與重新讀取、無效設定、更新失敗還原、快照在同一幀到達／過期的競態。
 原生 macOS 對話框、實體螢幕旋轉及閃爍改善尚待實機確認。
 
+### 修正統計欄位缺失導致的顯示崩潰
+
+實機診斷的堆疊停在 `cluster_core_usage_sampler.sample_text()` → `hud_stats.py`，
+但貼上的預覽未包含最後的例外行。以現有 HKG 精簡 deviceState 與實際 pinned hud_stats.py
+已重現 `AttributeError: ... cpuUsagePercent`。舊 adapter 沒有提供統計模組直接讀取的屬性。
+新版為未傳送的 CPU 使用率提供空陣列，記憶體及儲存空間提供 None，顯示 CPU --／無資料。
+不將 Mac 數值或假的 0% 當作 C4 數值，之後若封包含真實統計仍優先使用。
+回歸測試先在舊版失敗，再於修正後通過；本次共 10 項 adapter/安裝、5 項設定、
+2 項 pinned parser/統計整合測試通過，實際閃爍改善仍待 Mac 驗證。
+診斷視窗只顯示狀態摘要；完整堆疊在剪貼簿及 Terminal，請直接貼上完整剪貼簿內容。
+接收封包超過 100 秒與缺少輸出 heartbeat 仍須分別確認，不能把此修正視為資料鏈路也已恢復。
+
 ## 資料保護與限制
 
 - 接收既有 `0x4000` 顯示通道，以 `source=hkg_hud_v1` 區分。
