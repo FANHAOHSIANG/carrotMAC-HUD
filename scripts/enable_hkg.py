@@ -19,6 +19,24 @@ def atomic_copy(source, target):
   os.replace(tmp, target)
 
 
+def check_app(data):
+  """Static installation preflight, not proof of a successful USB handshake.
+
+  The installed 0.8.7 HUD build has the receiver class/writer and supervisor
+  markers but no contiguous carrot_hud_v1 bytes. Check the receiver's own
+  implementation markers as an alternative, never the class name alone.
+  """
+  if b'carrot_hud_v1' in data:
+    evidence = 'capability marker'
+  elif b'CarrotHUD' in data and b'carrot-hud-writer' in data:
+    evidence = 'receiver class + writer thread'
+  else:
+    raise ValueError('無法確認現有 App 的 Carrot HUD receiver，保留 App；請提供 App 版本與檢查結果。')
+  if b'mac_hud_supervisor.py' not in data:
+    raise ValueError('無法確認現有 App 的 HUD helper 自動啟動功能，保留 App。')
+  return evidence
+
+
 def install(root, base):
   helper = base / 'carrot/tools/jetlink'
   for name in ('hud.py', 'hud_runtime.py', 'mac_hud_supervisor.py'):
@@ -32,8 +50,10 @@ def install(root, base):
   if 'PACKET' not in runtime or 'if not MAC:' not in hud or 'panel.lock' not in hud:
     raise ValueError('缺少 Mac HUD 適配／panel lock，保留現有安裝。')
   app = base / 'jetlink/macos/build/Jetlink.app/Contents/MacOS/Jetlink'
-  if not app.is_file() or b'carrot_hud_v1' not in app.read_bytes():
-    raise ValueError('現有 App 未找到 Carrot HUD receiver，保留 App；需先製作符合目前版本的 HUD App。')
+  if not app.is_file():
+    raise ValueError('找不到既有 Jetlink App：' + str(app))
+  app_data = app.read_bytes()
+  evidence = check_app(app_data)
   for source in (root / 'hkg/hkg_hud.py', root / 'AppAutostart/mac_hud_supervisor.py'):
     compile(source.read_text(), str(source), 'exec')
   backup = base / 'backups' / ('hkg-hud-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
@@ -41,7 +61,8 @@ def install(root, base):
   existed = [name for name in NAMES if (helper / name).exists()]
   for name in existed:
     shutil.copy2(helper / name, backup / name)
-  info = {'backup': str(backup), 'existed': existed, 'app_sha256': hashlib.sha256(app.read_bytes()).hexdigest()}
+  info = {'backup': str(backup), 'existed': existed, 'app_sha256': hashlib.sha256(app_data).hexdigest(),
+          'app_hud_evidence': evidence}
   try:
     atomic_copy(root / 'hkg/hkg_hud.py', helper / 'hkg_hud.py')
     atomic_copy(root / 'AppAutostart/mac_hud_supervisor.py', helper / 'mac_hud_supervisor.py')
@@ -54,6 +75,7 @@ def install(root, base):
     restore_files(helper, backup, existed)
     raise
   print('hkg HUD adapter 已安裝；Jetlink App 未被替換。\n備份：' + str(backup))
+  print('App 靜態檢查：' + evidence + '；實際接收仍需連接 C4 確認。')
 
 
 def restore_files(helper, backup, existed):

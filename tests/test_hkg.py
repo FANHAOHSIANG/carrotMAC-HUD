@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+APP_BYTES = b'original app carrot_hud_v1 mac_hud_supervisor.py'
 spec = importlib.util.spec_from_file_location('hkg_hud', ROOT / 'hkg/hkg_hud.py')
 hkg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hkg)
@@ -79,7 +80,7 @@ class InstallTests(unittest.TestCase):
     (helper / 'mac_hud_supervisor.py').write_text('original supervisor')
     app = base / 'jetlink/macos/build/Jetlink.app/Contents/MacOS/Jetlink'
     app.parent.mkdir(parents=True)
-    app.write_bytes(b'original app carrot_hud_v1')
+    app.write_bytes(APP_BYTES)
     (base / 'update').mkdir()
     return helper, app
 
@@ -90,11 +91,43 @@ class InstallTests(unittest.TestCase):
       with patch.object(installer.subprocess, 'check_output', return_value='a564ce1dc082909b1fdc73b72e64d920336b34d6'):
         installer.install(ROOT, base)
       self.assertTrue((helper / 'hkg-hud.enabled').exists())
-      self.assertEqual(app.read_bytes(), b'original app carrot_hud_v1')
+      self.assertEqual(app.read_bytes(), APP_BYTES)
       info = json.loads((base / 'update/hkg-hud-backup.json').read_text())
       installer.restore_files(helper, Path(info['backup']), info['existed'])
       self.assertEqual((helper / 'mac_hud_supervisor.py').read_text(), 'original supervisor')
       self.assertFalse((helper / 'hkg_hud.py').exists())
+
+  def test_receiver_writer_and_autostart_allow_existing_app_without_capability_literal(self):
+    with tempfile.TemporaryDirectory() as folder:
+      base = Path(folder)
+      helper, app = self.setup_tree(base)
+      data = b'installed 0.8.7 CarrotHUD carrot-hud-writer mac_hud_supervisor.py'
+      app.write_bytes(data)
+      self.assertNotIn(b'carrot_hud_v1', data)
+      with patch.object(installer.subprocess, 'check_output', return_value='a564ce1dc082909b1fdc73b72e64d920336b34d6'):
+        installer.install(ROOT, base)
+      self.assertEqual(app.read_bytes(), data)
+      self.assertTrue((helper / 'hkg-hud.enabled').exists())
+      info = json.loads((base / 'update/hkg-hud-backup.json').read_text())
+      self.assertEqual(info['app_hud_evidence'], 'receiver class + writer thread')
+      installer.restore_files(helper, Path(info['backup']), info['existed'])
+      self.assertEqual((helper / 'mac_hud_supervisor.py').read_text(), 'original supervisor')
+      self.assertFalse((helper / 'hkg-hud.enabled').exists())
+
+  def test_partial_receiver_or_missing_autostart_aborts_before_backup_or_edit(self):
+    for data in (b'CarrotHUD mac_hud_supervisor.py', b'carrot-hud-writer mac_hud_supervisor.py',
+                 b'CarrotHUD carrot-hud-writer', b'carrot_hud_v1', b'mac_hud_supervisor.py'):
+      with self.subTest(data=data), tempfile.TemporaryDirectory() as folder:
+        base = Path(folder)
+        helper, app = self.setup_tree(base)
+        app.write_bytes(data)
+        with patch.object(installer.subprocess, 'check_output', return_value='a564ce1dc082909b1fdc73b72e64d920336b34d6'):
+          with self.assertRaises(ValueError):
+            installer.install(ROOT, base)
+        self.assertFalse((base / 'backups').exists())
+        self.assertFalse((helper / 'hkg_hud.py').exists())
+        self.assertEqual(app.read_bytes(), data)
+        self.assertEqual((helper / 'mac_hud_supervisor.py').read_text(), 'original supervisor')
 
   def test_wrong_renderer_or_official_app_aborts_before_edit(self):
     with tempfile.TemporaryDirectory() as folder:
