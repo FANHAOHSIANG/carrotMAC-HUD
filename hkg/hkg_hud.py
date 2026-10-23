@@ -14,7 +14,7 @@ from types import SimpleNamespace
 SOURCE = 'hkg_hud_v1'
 MAX_BYTES = 14 * 1024
 HEADER = struct.Struct('<d')
-ALLOWED = ('carState', 'controlsState', 'selfdriveState', 'carControl', 'modelV2', 'radarState', 'deviceState')
+ALLOWED = ('carState', 'controlsState', 'selfdriveState', 'carControl', 'modelV2', 'radarState', 'deviceState', 'radarTracks')
 
 
 def namespace(value):
@@ -51,8 +51,11 @@ def read_packet(path, epoch=None, mono=None):
       source_age = record['age'].get(name)
       limit = 1.5 if name == 'deviceState' else .5
       if isinstance(item, dict) and isinstance(source_age, (int, float)) and 0 <= source_age + elapsed < limit:
-        data[name] = item
-        age[name] = source_age + elapsed
+        # Current HKG publishes RadarData as radarTracks; pinned Carrot uses
+        # the points member of liveTracks. This alias is display-local only.
+        target = 'liveTracks' if name == 'radarTracks' else name
+        data[target] = item
+        age[target] = source_age + elapsed
     record = dict(record, hkg=data, age=age, _received_epoch=received)
     return mono - elapsed, record
   except (OSError, ValueError, TypeError, KeyError, AttributeError, struct.error):

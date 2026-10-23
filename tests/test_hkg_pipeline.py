@@ -162,6 +162,46 @@ class PipelineTests(unittest.TestCase):
     self.assertEqual(state.alert.alert_type, 'hkgHudStale')
     self.assertEqual(state.detected_vehicles, ())
 
+  def test_adjacent_radar_tracks_reach_scene_with_real_speed_and_normal_priority(self):
+    from cluster_scene import build_cluster_scene
+    self.values['radarTracks'] = dict(points=[
+      dict(trackId=101, dRel=20., yRel=3.5, vRel=-2.),
+      dict(trackId=102, dRel=25., yRel=-3.5, vRel=1.),
+      dict(trackId=103, dRel=10., yRel=float('nan'), vRel=0.),
+    ])
+    state = self.update()
+    points = {p.label: p for p in state.radar_points}
+    self.assertEqual(set(points), {'T101', 'T102'})
+    self.assertEqual(points['T101'].lateral_m, -3.5)
+    self.assertEqual(points['T102'].lateral_m, 3.5)
+    self.assertAlmostEqual(points['T101'].absolute_speed_kph, 64.8)
+    self.assertAlmostEqual(points['T102'].absolute_speed_kph, 75.6)
+    scene = build_cluster_scene(state)
+    vehicles = {v.label: v for v in scene.vehicles}
+    self.assertIn('T101', vehicles)
+    self.assertIn('T102', vehicles)
+    self.assertFalse(vehicles['T101'].primary)
+    self.assertFalse(vehicles['T102'].primary)
+    self.assertTrue(vehicles['L1'].primary)
+    self.values['radarTracks']['points'] = []
+    self.assertEqual(self.update().radar_points, ())
+
+  def test_radar_track_fault_loss_and_no_lateral_data_never_invent_side_cars(self):
+    self.values['radarTracks'] = dict(points=[dict(trackId=1, dRel=20., yRel=3.5, vRel=1.)])
+    self.assertTrue(self.update().radar_points)
+    self.values['radarTracks']['errors'] = {'canError': True}
+    self.assertEqual(self.update().radar_points, ())
+    self.values['radarTracks'].pop('errors')
+    self.assertTrue(self.update().radar_points)
+    self.values.pop('radarTracks')
+    self.assertEqual(self.update().radar_points, ())
+    self.values['radarTracks'] = dict(points=[dict(trackId=1, dRel=20., yRel=float('nan'), vRel=1.)])
+    state = self.update()
+    self.assertEqual(state.radar_points, ())
+    self.assertTrue(state.left_blindspot)
+    self.assertEqual(len(state.detected_vehicles), 2)  # only the original L1/L2
+    self.assertEqual(self.update(elapsed=.51).radar_points, ())
+
 
 if __name__ == '__main__':
   unittest.main()
