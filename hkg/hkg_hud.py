@@ -117,6 +117,7 @@ def adapt_live_source(cluster_live):
 
     def update(self):
       value = snapshot()
+      self.packet_connected = value is not None
       names = tuple(sorted(value[1]['hkg'])) if value else ()
       if names != self.previous_availability:
         # Carrot's parser caches paths, leads and latActive between updates.
@@ -135,6 +136,12 @@ def adapt_live_source(cluster_live):
 
     def _live_cluster_alert(self, current_alert, onroad):
       if not self._service_alive('carState'):
+        if getattr(self, 'packet_connected', False):
+          standby = self.onroad_state() is False
+          return cluster_live.ClusterAlert(
+            text1='HUD connected' if standby else 'Waiting for vehicle data',
+            text2=('Vehicle standby | ' + time.strftime('%H:%M:%S')) if standby else 'C4 connected; carState unavailable',
+            size=2, status=0 if standby else 1, alert_type='hkgHudStandby' if standby else 'hkgHudWaiting')
         return cluster_live.ClusterAlert(text1='HUD data unavailable', text2='Check C4 / USB connection',
                                         size=2, status=1, alert_type='hkgHudStale')
       return super()._live_cluster_alert(current_alert, onroad)
@@ -142,21 +149,19 @@ def adapt_live_source(cluster_live):
   return HkgLiveSource
 
 
-def main():
-  import hud
-  import hud_protocol
-  from hkg_display import DisplaySettings
-  display = DisplaySettings()
-  hud.read_snapshot = hud_protocol.read_snapshot = snapshot
-  hud.RemoteSubMaster = HkgSubMaster
-  OriginalParams = hud.DisplayParams
-
+def display_params(OriginalParams, display):
   class HkgParams(OriginalParams):
     def get(self, key, *args, **kwargs):
       override = display.get(key)
       if override is not None:
         return override
       if key == 'ClusterHud':
+        return b'1'
+      if key == 'ClusterHudDebug':
+        # Carrot mode 1 permits live standby output at startup and offroad.
+        # Modes 2/3 add debug panels. Never fake IsOnroad or vehicle.started.
+        return b'1'
+      if key == 'ShowDateTime':
         return b'1'
       # Preserve display mode across an interrupted USB lease, but never
       # cache vehicle state or a positive external-compute badge.
@@ -167,7 +172,16 @@ def main():
         return b'0'  # driving scene; camera/map channels are not ported
       return super().get(key, *args, **kwargs)
 
-  hud.DisplayParams = HkgParams
+  return HkgParams
+
+
+def main():
+  import hud
+  import hud_protocol
+  from hkg_display import DisplaySettings
+  hud.read_snapshot = hud_protocol.read_snapshot = snapshot
+  hud.RemoteSubMaster = HkgSubMaster
+  hud.DisplayParams = display_params(hud.DisplayParams, DisplaySettings())
   import cluster_live
   cluster_live.OpenpilotLiveSource = adapt_live_source(cluster_live)
   hud.main()

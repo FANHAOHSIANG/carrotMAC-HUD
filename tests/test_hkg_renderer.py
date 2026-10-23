@@ -4,6 +4,8 @@ CARROT_HELPER_ROOT=/path/to/carrot python3 -m unittest discover -s tests -p test
 No GPU, USB, vehicle data or control processes are used.
 """
 import importlib.util
+import ast
+import base64
 import os
 from pathlib import Path
 import sys
@@ -20,6 +22,37 @@ spec.loader.exec_module(hkg)
 
 @unittest.skipUnless(os.environ.get('CARROT_HELPER_ROOT'), 'requires the pinned Carrot helper checkout')
 class RendererTests(unittest.TestCase):
+  def test_actual_carrot_output_gate_allows_live_standby_without_faking_ignition(self):
+    helper = Path(os.environ['CARROT_HELPER_ROOT']).resolve()
+    def load_class(path, name, namespace):
+      tree = ast.parse(path.read_text())
+      node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == name)
+      exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), namespace)
+      return namespace[name]
+
+    value = [None]
+    base = load_class(helper / 'tools/jetlink/hud.py', 'DisplayParams',
+                      {'time': time, 'base64': base64, 'read_snapshot': lambda: value[0]})
+    settings = hkg.display_params(base, types.SimpleNamespace(get=lambda key: None))
+    module = types.ModuleType('openpilot.common.params')
+    module.Params = settings
+    gate_type = load_class(helper / 'openpilot/selfdrive/carrot/cluster/main.py', 'ClusterHudOutputGateParamReader',
+                           {'CLUSTER_HUD_DEBUG_PARAM': 'ClusterHudDebug'})
+    with patch.dict(sys.modules, {'openpilot.common.params': module}):
+      for onroad in (None, False, True, False):
+        with self.subTest(onroad=onroad):
+          value[0] = None if onroad is None else (0., {'params': {
+            'IsOnroad': base64.b64encode(b'1' if onroad else b'0').decode()}})
+          params = settings()
+          # Same startup predicate as the pinned hud.main(), plus its real gate.
+          self.assertTrue(params.get_int('ClusterHud') == 1 and
+                          (params.get_bool('IsOnroad') or params.get_int('ClusterHudDebug') >= 1))
+          gate = gate_type()
+          self.assertTrue(gate.allowed())
+          self.assertEqual(gate.read_mode(), 1)
+          self.assertEqual(params.get_bool('IsOnroad'), bool(onroad))
+          self.assertEqual(params.get_int('ShowDateTime'), 1)
+
   def test_pinned_stats_accept_minimal_device_state_and_do_not_invent_metrics(self):
     helper = Path(os.environ['CARROT_HELPER_ROOT']).resolve()
     sys.path[:0] = [str(helper / 'tools/jetlink'), str(helper / 'openpilot/selfdrive/carrot/cluster')]
@@ -88,6 +121,20 @@ class RendererTests(unittest.TestCase):
         state = source.update()
         self.assertEqual(state.speed_kph, 72.)
         self.assertTrue(state.lfa_active)
+      with patch.object(hkg, 'snapshot', return_value=packet({'deviceState': {'started': False}}, 4)), \
+           patch.object(hkg.time, 'strftime', return_value='12:34:56'):
+        state = source.update()
+        self.assertEqual(state.alert.alert_type, 'hkgHudStandby')
+        self.assertIn('12:34:56', state.alert.text2)
+        self.assertFalse(state.onroad)
+        self.assertFalse(state.lfa_active)
+        self.assertEqual(state.model_path, ())
+        self.assertEqual(state.detected_vehicles, ())
+      with patch.object(hkg, 'snapshot', return_value=packet({'deviceState': {'started': True}}, 5)):
+        state = source.update()
+        self.assertEqual(state.alert.alert_type, 'hkgHudWaiting')
+      with patch.object(hkg, 'snapshot', return_value=None):
+        self.assertEqual(source.update().alert.alert_type, 'hkgHudStale')
 
 
 if __name__ == '__main__':
