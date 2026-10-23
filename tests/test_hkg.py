@@ -142,6 +142,34 @@ class InstallTests(unittest.TestCase):
           installer.install(ROOT, base)
       self.assertEqual((helper / 'mac_hud_supervisor.py').read_text(), 'original supervisor')
 
+  def test_reinstall_retains_original_backup_and_failed_upgrade_preserves_working_files(self):
+    with tempfile.TemporaryDirectory() as folder:
+      base = Path(folder)
+      helper, app = self.setup_tree(base)
+      with patch.object(installer.subprocess, 'check_output', return_value='a564ce1dc082909b1fdc73b72e64d920336b34d6'):
+        installer.install(ROOT, base)
+        manifest = base / 'update/hkg-hud-backup.json'
+        original = json.loads(manifest.read_text())
+        installer.install(ROOT, base)
+        updated = json.loads(manifest.read_text())
+        self.assertEqual(updated['backup'], original['backup'])
+        self.assertNotEqual(updated['last_update_backup'], original['backup'])
+        saved = {name: (helper / name).read_bytes() for name in installer.NAMES}
+        manifest_before = manifest.read_bytes()
+        copy = installer.atomic_copy
+        def fail(source, target):
+          if source == ROOT / 'hkg/hkg_display.py':
+            raise OSError('disk full')
+          copy(source, target)
+        with patch.object(installer, 'atomic_copy', side_effect=fail), self.assertRaises(OSError):
+          installer.install(ROOT, base)
+        self.assertEqual(manifest.read_bytes(), manifest_before)
+        self.assertEqual({name: (helper / name).read_bytes() for name in installer.NAMES}, saved)
+        installer.restore_files(helper, Path(updated['backup']), updated['existed'])
+        self.assertEqual((helper / 'mac_hud_supervisor.py').read_text(), 'original supervisor')
+        self.assertFalse((helper / 'hkg_display.py').exists())
+        self.assertEqual(app.read_bytes(), APP_BYTES)
+
   def test_failed_write_restores_previous_files(self):
     with tempfile.TemporaryDirectory() as folder:
       base = Path(folder)

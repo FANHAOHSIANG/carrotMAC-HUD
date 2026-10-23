@@ -42,8 +42,9 @@ class RendererTests(unittest.TestCase):
     with patch.dict(sys.modules, {'openpilot.cereal': cereal, 'openpilot.cereal.messaging': messaging}):
       source = hkg.adapt_live_source(cluster_live)()
       self.addCleanup(source.close)
-      with patch.object(hkg, 'snapshot', return_value=packet(data, 1)):
+      with patch.object(hkg, 'snapshot', side_effect=[packet(data, 1), None]) as read:
         state = source.update()
+        read.assert_called_once_with()
         self.assertEqual(state.speed_kph, 72.)
         self.assertEqual(state.cruise_kph, 90)
         self.assertTrue(state.lfa_active)
@@ -55,8 +56,9 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(state.model_path, ())
         self.assertEqual(state.detected_vehicles, ())
         self.assertFalse(state.lfa_active)
-      with patch.object(hkg, 'snapshot', return_value=None):
+      with patch.object(hkg, 'snapshot', side_effect=[None, packet(data, 3)]) as read:
         state = source.update()
+        read.assert_called_once_with()
         self.assertEqual(state.alert.alert_type, 'hkgHudStale')
       with patch.object(hkg, 'snapshot', return_value=packet(data, 3)):
         state = source.update()

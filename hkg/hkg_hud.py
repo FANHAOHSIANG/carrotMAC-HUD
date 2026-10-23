@@ -79,7 +79,11 @@ class HkgSubMaster:
     return self.data[key]
 
   def update(self, timeout=0):
-    value = snapshot()
+    if hasattr(self, 'pending_snapshot'):
+      value = self.pending_snapshot
+      del self.pending_snapshot
+    else:
+      value = snapshot()
     now = time.monotonic()
     record = value[1] if value else {}
     generation = record.get('_received_epoch')
@@ -115,6 +119,13 @@ def adapt_live_source(cluster_live):
         self.parser = cluster_live.live_route_parser()
         self.previous_availability = names
         self.sm.generation = None
+        now = time.monotonic()
+        if now >= getattr(self, 'next_availability_log', 0.):
+          print('HKG HUD available sources: ' + (', '.join(names) or 'none (missing/stale packet)'), flush=True)
+          self.next_availability_log = now + 2.
+      # The parent calls sm.update(). Use the same snapshot for invalidation
+      # and parsing, even if a packet arrives/expires between these two steps.
+      self.sm.pending_snapshot = value
       return super().update()
 
     def _live_cluster_alert(self, current_alert, onroad):
@@ -129,12 +140,17 @@ def adapt_live_source(cluster_live):
 def main():
   import hud
   import hud_protocol
+  from hkg_display import DisplaySettings
+  display = DisplaySettings()
   hud.read_snapshot = hud_protocol.read_snapshot = snapshot
   hud.RemoteSubMaster = HkgSubMaster
   OriginalParams = hud.DisplayParams
 
   class HkgParams(OriginalParams):
     def get(self, key, *args, **kwargs):
+      override = display.get(key)
+      if override is not None:
+        return override
       if key == 'ClusterHud':
         return b'1'
       # Preserve display mode across an interrupted USB lease, but never

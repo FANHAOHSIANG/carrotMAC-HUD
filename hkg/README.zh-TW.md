@@ -40,8 +40,34 @@ https://github.com/FANHAOHSIANG/sunnypilot/tree/hkg-enhanced-jetlink-hud
 
 退出 App/helper 後：`python3 scripts/enable_hkg.py --rollback`。
 這會還原安裝前的 helper 與選擇狀態；App 始終保持原檔案。
-重複安裝前需先還原，避免覆蓋第一份備份。
+新版可直接重新執行 06 更新 helper：保留第一次安裝前的備份，另保存更新前版本。
+更新失敗會恢復更新前 helper；--rollback 仍還原第一次安裝前的狀態。
 測試期間不要執行原 `03-Update.command`，它不包含 hkg adapter 安裝流程。
+
+## 顯示設定視窗與閃爍診斷
+
+退出 Jetlink App，再執行新版 `06-HKG-HUD.command` 安裝／更新。
+重新開啟 Jetlink 後，雙擊同資料夾的 `07-HKG-HUD-Settings.command`。
+它使用 macOS 原生對話框，不需要瀏覽器或額外 GUI 套件。
+
+- 畫面方向：正常／旋轉 180°。上下顛倒時選旋轉 180°。
+- 亮度：10、25、50、75、100%，執行中套用。
+- 查看並複製閃爍診斷：顯示接收封包年齡、來源、螢幕 heartbeat 與最近 HUD 日誌，
+  並複製到剪貼簿；不自動傳送資料。
+
+偏好保存在 `~/Library/Application Support/CarrotMacHUD/hkg-display.json`，僅作用於 HKG HUD。
+方向沿用原 renderer 的 0／2 設定。H.264 改方向時會退出顯示程序，由 supervisor 自動重開，
+因此會短暫黑屏一次；不需重啟 C4 或 Jetlink。亮度不需重開。
+損壞的設定檔不會讓正在顯示的方向反覆回到預設值。
+
+閃爍原因尚未由實機日誌確認。本版修正同一幀重複讀取 snapshot：原本清理 parser 和更新車況
+可能分別讀到不同封包，現在共用一次讀取結果。保留 0.5 秒有效期限及失效資料清除，
+不以顯示舊車況隱藏連線中斷。日誌新增限頻的來源可用性變化，供後續定位。
+如果仍閃爍，使用設定視窗的診斷功能提供結果，並說明是整個螢幕黑掉還是只有車道／數字消失。
+
+本次 10 項 adapter／安裝測試、5 項設定測試及 1 項 pinned parser 整合測試通過。
+測試涵蓋方向設定保存與重新讀取、無效設定、更新失敗還原、快照在同一幀到達／過期的競態。
+原生 macOS 對話框、實體螢幕旋轉及閃爍改善尚待實機確認。
 
 ## 資料保護與限制
 

@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 
-NAMES = ('hkg_hud.py', 'mac_hud_supervisor.py', 'hkg-hud.enabled')
+NAMES = ('hkg_hud.py', 'hkg_display.py', 'mac_hud_supervisor.py', 'hkg-hud.enabled')
 
 
 def atomic_copy(source, target):
@@ -54,8 +54,14 @@ def install(root, base):
     raise ValueError('找不到既有 Jetlink App：' + str(app))
   app_data = app.read_bytes()
   evidence = check_app(app_data)
-  for source in (root / 'hkg/hkg_hud.py', root / 'AppAutostart/mac_hud_supervisor.py'):
+  for source in (root / 'hkg/hkg_hud.py', root / 'hkg/hkg_display.py', root / 'AppAutostart/mac_hud_supervisor.py'):
     compile(source.read_text(), str(source), 'exec')
+  manifest = base / 'update/hkg-hud-backup.json'
+  previous = json.loads(manifest.read_text()) if manifest.exists() else None
+  if previous is not None:
+    original = Path(previous['backup']).resolve()
+    if not original.is_relative_to((base / 'backups').resolve()) or not original.is_dir():
+      raise ValueError('原始備份不存在或路徑無效，停止更新。')
   backup = base / 'backups' / ('hkg-hud-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
   backup.mkdir(parents=True)
   existed = [name for name in NAMES if (helper / name).exists()]
@@ -63,11 +69,15 @@ def install(root, base):
     shutil.copy2(helper / name, backup / name)
   info = {'backup': str(backup), 'existed': existed, 'app_sha256': hashlib.sha256(app_data).hexdigest(),
           'app_hud_evidence': evidence}
+  if previous is not None:
+    # Retain the first pre-HKG backup for --rollback. The update backup lets
+    # a failed copy restore the working adapter instead of disabling it.
+    info = {**previous, 'last_update_backup': str(backup), 'app_hud_evidence': evidence}
   try:
     atomic_copy(root / 'hkg/hkg_hud.py', helper / 'hkg_hud.py')
+    atomic_copy(root / 'hkg/hkg_display.py', helper / 'hkg_display.py')
     atomic_copy(root / 'AppAutostart/mac_hud_supervisor.py', helper / 'mac_hud_supervisor.py')
     (helper / 'hkg-hud.enabled').touch()
-    manifest = base / 'update/hkg-hud-backup.json'
     tmp = manifest.with_suffix('.tmp')
     tmp.write_text(json.dumps(info, indent=2))
     os.replace(tmp, manifest)
@@ -111,14 +121,12 @@ def main():
       manifest.unlink()
       print('已還原 hkg HUD 安裝前的 helper。')
     else:
-      if (state / 'hkg-hud-backup.json').exists():
-        raise ValueError('已存在 hkg HUD 安裝紀錄；先 --rollback 後再更新，保留原始備份。')
       install(Path(__file__).resolve().parents[1], base)
 
 
 if __name__ == '__main__':
   try:
     main()
-  except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+  except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
     print('安裝停止：' + str(exc), file=sys.stderr)
     raise SystemExit(1)
