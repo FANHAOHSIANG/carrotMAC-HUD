@@ -85,6 +85,7 @@ def install(root, base):
     restore_files(helper, backup, existed)
     raise
   print('hkg HUD adapter 已安裝；Jetlink App 未被替換。\n備份：' + str(backup))
+  print('已啟用 Carrotpilot / HKG HUD 自動辨識；重新開啟原本的 Jetlink App 即可。')
   print('App 靜態檢查：' + evidence + '；實際接收仍需連接 C4 確認。')
 
 

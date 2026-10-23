@@ -1,5 +1,24 @@
 # hkg Jetlink HUD adapter
 
+## 自動辨識 Carrotpilot / HKG HUD（2026-10-24）
+
+更新此套件後，退出 Jetlink，執行一次 `06-HKG-HUD.command`，再開原本的 App。
+此更新僅替換 Mac helper；不重建 App、不下載模型、不修改 C4。
+
+- supervisor 讀取既有 App receiver 的 snapshot.packet，依實際協定辨識來源，
+  不依分支名稱或手動標記猜測。HKG 必須明確標記 hkg_hud_v1；Carrot 使用其 v1 事件封包。
+- 連續確認兩個不同的新鮮封包後，選用 hkg_hud.py 或原 hud.py。
+- 換 C4 分支重新連線後會自動切換，不需刪除／建立 hkg-hud.enabled；舊標記僅保留供相容與還原。
+- 中斷、過期、未知或損壞封包不切模式；既有 helper 仍按原本規則處理無資料。
+  首次啟動沒有可辨識封包時先等待，不啟動猜測的 renderer。
+- 切換時先停止舊 renderer 整個 process group（含編碼程序），再啟動新 renderer。
+  螢幕可能短暫黑屏；Jetlink 模型服務不因 HUD 切換被重啟。
+- 日誌會顯示 `HUD auto-detected: HKG` 或 `HUD auto-detected: Carrotpilot`。
+- 自動辨識不會替 C4 啟用 HUD 發布，也不會讓不支援 HUD 協定的分支自動支援。
+
+32 項 Mac 測試通過，涵蓋雙向切換、舊封包、未知來源、重複封包、來源交錯、
+斷線與先停舊程序再啟動新程序。尚待實體 Mac/C4/TURZX 切換驗證。
+
 此分支配對：
 https://github.com/FANHAOHSIANG/sunnypilot/tree/hkg-enhanced-jetlink-hud
 
@@ -16,8 +35,8 @@ https://github.com/FANHAOHSIANG/sunnypilot/tree/hkg-enhanced-jetlink-hud
    `CarrotHUD` 與 `carrot-hud-writer` 標記；兩條路徑都需有 `mac_hud_supervisor.py` 自動啟動標記。
    這是靜態安裝前檢查，不代表實際通訊已成功；仍由 C4 hello 回覆的 HUD capability 決定是否傳送。
    檢查不通過會停止，不會覆蓋 App。
-4. 工具備份 supervisor 與 adapter／選擇標記，安裝 `hkg_hud.py` 並讓既有 App
-   supervisor 選擇它。不替換 App，也不更改模型。
+4. 工具備份 supervisor 與 adapter／舊選擇標記，安裝 `hkg_hud.py` 並讓既有 App
+   supervisor 依實際封包自動選擇 Carrotpilot 或 HKG。不替換 App，也不更改模型。
 5. C4 使用配對分支 `d248f42d7` 或含該修正的後續版本，offroad 開啟 HUD，
    再開啟原有 Jetlink App。首次更新 C4 程式需重啟一次，其後 HUD 開關無須重啟。
 
