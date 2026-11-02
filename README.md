@@ -1,5 +1,30 @@
 # carrotMAC-HUD
 
+## 官方地圖預覽修正（Mac helper，不更換 App）
+
+`06-Install-Official-Map.command` 接收 C4 現有 HUD snapshot 裡的
+`nav_map_preview`，把官方 mapsd 的 256×256 PNG 顯示在模式 7 的右側。
+這條通道不使用舊 `carrot_map_v1` JPEG 訊息，也不需要重新編譯或降版
+Jetlink.app，不更換模型、不修改轉向或導航控制。它也不修正藍色路徑抖動。
+
+先在停車狀態退出 Jetlink App 與舊 HUD helper，於本修正版本目錄執行：
+
+```bash
+bash 06-Install-Official-Map.command --check
+bash 06-Install-Official-Map.command
+```
+
+安裝會先驗證與備份既有 helper，失敗時還原，成功後再開原本的 App。
+它支援已經有模式 7 的 renderer，或原先固定版 helper 的模式 7 顯示補丁。
+未知版本會停止，不會覆蓋整個 helper、App 或 Python 環境。
+需要還原時退出 App，再執行 `bash 06-Install-Official-Map.command --rollback`。
+後續若已另行修改這些檔案，還原會停止以保留修改。
+
+C4 必須同時安裝配對修正：`tools/jetlink/hud_wifi.py` 的 Mac 分支
+啟用 `nav_map=True`。HUD 顯示模式設為 7，開啟導航目的地並等待有效 GPS；
+Mac 不需要額外 Mapbox 金鑰。圖片或連線過期時隱藏地圖，避免顯示舊位置。
+目前已做桌面封包／PNG／過期／安裝還原測試，Mac/C4/TURZX 實機仍需確認。
+
 CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始碼補丁、Mac 更新腳本與官方更新檢查，不需要另外建立名為 jetlink 的 Fork。
 
 ## Protocol 3 更新版
