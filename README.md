@@ -1,5 +1,17 @@
 # carrotMAC-HUD
 
+## Mac HUD 藍線顯示修正
+
+退出 Jetlink App 與 HUD helper 後執行 `bash 07-Fix-Blue-Line.command --check`，
+通過後執行 `bash 07-Fix-Blue-Line.command`，再開原本 App。
+這只修正 Mac HUD：連續路段裁切、每 2 公尺取樣、保留實際橫向偏移，
+取消強制從車頭零點連到下一個地圖頂點，並加入時間常數 0.12 秒的顯示插值。
+路線更換、資料中斷或朝向單次變化超過 15 度時重置。
+不會改動 C4、原始定位、導航模型或控制；它不能消除地圖本身與車道的偏差。
+幾何修正及平滑會改變視覺呈現，仍需實機確認。
+退出 App 後可用 `bash 07-Fix-Blue-Line.command --rollback` 還原；
+已另行變更的檔案會停止還原以保留修改。備份與地圖通道的備份分開保存。
+
 ## 官方地圖預覽修正（Mac helper，不更換 App）
 
 `06-Install-Official-Map.command` 接收 C4 現有 HUD snapshot 裡的
