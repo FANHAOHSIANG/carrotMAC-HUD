@@ -1,5 +1,27 @@
 # carrotMAC-HUD
 
+## 2026-11-03 整合修正版：Mac N16 傳輸與車前路徑
+
+退出 Jetlink App 與 HUD helper，執行 `bash 10-Install-Drive-Fixes.command`。
+一次測試、編譯及安裝官方 0.8.12 + Mac N16 無損傳輸擴充，並恢復左側模型路徑。
+保留已安裝的 06 官方 PNG 地圖接收端、模型選擇與 Python 環境。
+App、supervisor 與 cluster_live.py 共用一份備份；安裝失敗會還原，
+`04-Rollback.command` 也會一起還原這三者。後續另行修改 renderer 則停止還原。
+
+**C4 必須另行安裝配對提交 `a5dfa24791f5eb5d10c7a873d3056d46862db076`；不用切換 carrot-wip 分支。**
+擴充僅對同意協商且模型/規格雜湊完全匹配的 N16 生效。
+地圖 float32 整數像素無損轉為 uint8；非整數/負零等值保留原格式。
+官方完整模型仍照常執行、檢查全部輸出並保留內部遞迴狀態，
+只縮短成功回覆給 C4 的資料。其他模型與舊 App 保留原格式。
+這是 Carrot 自訂擴充，並非官方 0.8.12 本身就有此功能。
+
+在相同 N16 下，每幀請求 payload 655604 → 458996 bytes，回覆 74340 → 8284 bytes
+（不含 telemetry、外層封包與 USB padding）。減少資料量並不等於已證明實車延遲改善。
+警告不隱藏，定位有效性、跳幀門檻、控制與模型不變；仍須同一組 Mac/C4 實測。
+C4 的 `/dev/shm/carrot-jetlink-model.json` 應顯示 `active=true`、
+`execution.compact_reply=true`；若為 false，先核對配對版本和實際模型。
+不要再跑 07，它會重新啟用不適合車道對齊的 GPS 路徑覆蓋。
+
 ## Jetlink 0.8.12 HUD 移植候選
 
 固定來源 `a863c3801da6fd925d14eb1f5b1e250f8efcc649`，Protocol 3。
@@ -28,10 +50,9 @@ Linux 已通過補丁、導航封包契約與 31 項 Python 測試；macOS 編�
 08:19–08:25 的 rlog 和 Mac Jetlink 日誌查因。HUD FPS 9.9 不是模型推論 FPS。
 不要放寬 locationd、通訊或模型有效性門檻來隱藏警告。
 
-## Mac HUD 藍線顯示修正
+## 舊版 07 藍線顯示修正（已停止使用，保留供還原）
 
-退出 Jetlink App 與 HUD helper 後執行 `bash 07-Fix-Blue-Line.command --check`，
-通過後執行 `bash 07-Fix-Blue-Line.command`，再開原本 App。
+請改用上方整合安裝或 08。下列為舊方案的限制與還原說明。
 這只修正 Mac HUD：連續路段裁切、每 2 公尺取樣、保留實際橫向偏移，
 取消強制從車頭零點連到下一個地圖頂點，並加入時間常數 0.12 秒的顯示插值。
 路線更換、資料中斷或朝向單次變化超過 15 度時重置。
