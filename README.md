@@ -1,5 +1,20 @@
 # carrotMAC-HUD
 
+## 車前路徑偏位：恢復模型行駛路徑
+
+實機回報證實，07 的幾何取樣與平滑不能讓地圖道路中心線對準實際車道。
+改用 `08-Restore-Model-Path.command`：退出 App/helper，先加 `--check`
+檢查，再執行安裝。左側保留 modelV2 產生的行駛路徑，右側仍顯示導航地圖；
+停止以 GPS 地圖投影覆寫 model_path，也不再執行 07 的顯示平滑。
+不用重做 06。08 只修改 Mac 的 cluster_live.py，有獨立備份與 `--rollback`。
+之後不要再執行 07，以免回到舊顯示策略。
+
+31 項 Python 測試通過，已核對實際 helper 的補丁可重複套用。
+模型行駛路徑仍可能隨模型輸出變動；這不是定位、模型掉幀或程序通訊的修復。
+2026-11-03 實機照片同時在 C4 顯示 locationd 接手警告；必須使用該次
+08:19–08:25 的 rlog 和 Mac Jetlink 日誌查因。HUD FPS 9.9 不是模型推論 FPS。
+不要放寬 locationd、通訊或模型有效性門檻來隱藏警告。
+
 ## Mac HUD 藍線顯示修正
 
 退出 Jetlink App 與 HUD helper 後執行 `bash 07-Fix-Blue-Line.command --check`，
