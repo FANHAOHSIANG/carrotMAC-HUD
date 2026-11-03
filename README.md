@@ -1,5 +1,18 @@
 # carrotMAC-HUD
 
+## Jetlink 0.8.12 HUD 移植候選
+
+固定來源 `a863c3801da6fd925d14eb1f5b1e250f8efcc649`，Protocol 3。
+HUD telemetry 與 HELLO 測試已移植，保留官方新增的 pick/fetches 欄位與 PickStore。
+PNG 地圖仍透過既有 snapshot JSON 原樣傳送；不新增推論訊息種類。
+
+退出 Jetlink App 與 HUD helper 後執行 `bash 09-Update-Jetlink-0812.command`。
+它在獨立候選目錄套用補丁、測試、編譯並驗證簽名，全部成功後才備份並替換 App。
+失敗時保留原本 App；保留現有 helper renderer、地圖接收與 08 的模型路徑修正。
+還原 App 使用同一候選 overlay 的 `04-Rollback.command`／update_mac.py --rollback。
+不更新 C4、不切換模型；不宣稱修復 locationd、掉幀或程序通訊錯誤。
+Linux 已通過補丁、導航封包契約與 31 項 Python 測試；macOS 編譯與實機驗證另計。
+
 ## 車前路徑偏位：恢復模型行駛路徑
 
 實機回報證實，07 的幾何取樣與平滑不能讓地圖道路中心線對準實際車道。

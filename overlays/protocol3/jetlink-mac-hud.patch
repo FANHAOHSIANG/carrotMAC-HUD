@@ -133,10 +133,10 @@ index 0000000..6485b36
 +}
 +#endif
 diff --git a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
-index 9b1a7d0..270d55e 100644
+index c157fa6..50fa28c 100644
 --- a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
 +++ b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
-@@ -112,7 +112,16 @@ public final class EngineHost: @unchecked Sendable {
+@@ -140,7 +140,16 @@ public final class EngineHost: @unchecked Sendable {
    public init(cache: ServerCache, hooks: ServerHooks = ServerHooks()) {
      self.cache = cache
      self.hooks = hooks
@@ -150,11 +150,11 @@ index 9b1a7d0..270d55e 100644
 +    #else
      telemetry = TelemetrySampler(source: hooks.telemetry)
 +    #endif
+     picks = PickStore(layout: cache.layout)
    }
  
-   deinit {
 diff --git a/JetlinkKit/Sources/JetlinkServer/Session.swift b/JetlinkKit/Sources/JetlinkServer/Session.swift
-index d8d8715..f538bef 100644
+index 6ea2e6f..2dbce94 100644
 --- a/JetlinkKit/Sources/JetlinkServer/Session.swift
 +++ b/JetlinkKit/Sources/JetlinkServer/Session.swift
 @@ -7,6 +7,11 @@ import JetlinkRegistry
@@ -199,7 +199,7 @@ index d8d8715..f538bef 100644
      guard let type = Wire.Msg(rawValue: message.msgType) else {
        try error(message.seq, "unknown_message", "type \(message.msgType)")
        return
-@@ -278,6 +299,12 @@ final class Session: @unchecked Sendable {
+@@ -285,6 +306,12 @@ final class Session: @unchecked Sendable {
        response["frame_port"] = Int(offer.port)
        response["frame_token"] = Int(offer.token)
      }
@@ -329,16 +329,17 @@ index 0000000..64bc5fc
 +}
 +#endif
 diff --git a/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift b/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
-index a76b15c..f3f3b32 100644
+index b4b4af4..ea80e51 100644
 --- a/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
 +++ b/JetlinkKit/Tests/JetlinkServerTests/ServerHooksTests.swift
-@@ -77,9 +77,12 @@ struct ServerHooksTests {
+@@ -77,10 +77,13 @@ struct ServerHooksTests {
  
    @Test("The hello carries Python's keys, the host's sleep_after and what the backend adds")
    func hello() throws {
 -    let python: Set = [
 +    var python: Set = [
        "protocol", "backend", "runtime_version", "device", "engine_state", "loaded", "frames_served", "cached_models", "telemetry", "sleep_after",
+       "pick", "fetches",
      ]
 +    #if os(macOS)
 +    python.formUnion(["carrot_hud_v1", "carrot_navi_v1", "carrot_host"])
@@ -346,13 +347,11 @@ index a76b15c..f3f3b32 100644
      try serve(hooks: ServerHooks()) { _, client in
        let hello = try client.hello()
        #expect(Set(hello.keys) == python)
-@@ -99,7 +102,10 @@ struct ServerHooksTests {
+@@ -103,7 +106,8 @@ struct ServerHooksTests {
      let golden = try Golden("tiny_stateful")
      let hooks = ServerHooks(telemetry: { ["temp_c": 51.5, "power_w": 12.25] })
      func readings(_ object: Any?) -> [String: Double]? {
 -      (object as? [String: Any])?.compactMapValues { ($0 as? NSNumber)?.doubleValue }
-+      // The display extension adds a Bool heartbeat; retain the exact
-+      // numeric sensor assertions, excluding only that named extension key.
 +      (object as? [String: Any])?.filter { $0.key != "carrot_hud_connected" }
 +        .compactMapValues { ($0 as? NSNumber)?.doubleValue }
      }
