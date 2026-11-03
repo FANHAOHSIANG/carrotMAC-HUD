@@ -1,0 +1,364 @@
+diff --git a/JetlinkKit/Sources/JetlinkServer/Session.swift b/JetlinkKit/Sources/JetlinkServer/Session.swift
+--- a/JetlinkKit/Sources/JetlinkServer/Session.swift
++++ b/JetlinkKit/Sources/JetlinkServer/Session.swift
+@@ -10,6 +10,7 @@
+   #if os(macOS)
+   private let carrotHUDOwner = UUID()
+   private var carrotHUDEnabled = false
++  private var carrotN16: CarrotN16?
+   #endif
+ 
+   private let transport: any MessageLink
+@@ -108,6 +109,7 @@
+     #if os(macOS)
+     CarrotHUD.shared.release(carrotHUDOwner)
+     carrotHUDEnabled = false
++    carrotN16 = nil
+     #endif
+     host.lock.lock()
+     if host.session === self {
+@@ -311,6 +313,11 @@
+     response["carrot_hud_v1"] = carrotHUDEnabled
+     response["carrot_navi_v1"] = carrotHUDEnabled
+     response["carrot_host"] = "mac"
++    carrotN16 = CarrotN16.matches(hello?[CarrotN16.capability]) ? CarrotN16() : nil
++    if carrotN16 != nil {
++      response[CarrotN16.capability] = CarrotN16.descriptor
++      log.info("Carrot N16 lossless map / driving output transport negotiated")
++    }
+     #endif
+     try sendJSON(.helloResp, seq: message.seq, response)
+   }
+@@ -447,6 +454,7 @@
+     var totalUs: UInt32 = 0
+     /// Floats of `outputBuffer` the reply carries, 0 for none.
+     var outputCount = 0
++    var responseFlags: Wire.Flag = []
+     /// Left out of those, unless the comma asked for them.
+     var hidden: Range<Int>?
+     var wantsState = false
+@@ -475,10 +483,10 @@
+     if let state {
+       try state.withUnsafeBytes { bytes in
+         parts[count] = bytes
+-        try transport.sendParts(.inferResp, seq: seq, parts: UnsafeBufferPointer(start: parts, count: count + 1), flags: [])
++        try transport.sendParts(.inferResp, seq: seq, parts: UnsafeBufferPointer(start: parts, count: count + 1), flags: reply.responseFlags)
+       }
+     } else {
+-      try transport.sendParts(.inferResp, seq: seq, parts: UnsafeBufferPointer(start: parts, count: count), flags: [])
++      try transport.sendParts(.inferResp, seq: seq, parts: UnsafeBufferPointer(start: parts, count: count), flags: reply.responseFlags)
+     }
+   }
+ 
+@@ -487,18 +495,35 @@
+     let started = DispatchTime.now().uptimeNanoseconds
+     host.lastSeenAt = ProcessInfo.processInfo.systemUptime
+     let layout = loaded.staging.layout
+-    guard message.payload.count == layout.requestBytes else {
+-      // The offsets below come from the spec, not the wire: a client on
+-      // another model would have its scalars read out of the image.
+-      return InferReply(status: .badShape)
+-    }
++    guard message.payload.count >= Wire.inferReqSize else { return InferReply(status: .badShape) }
+     let base = message.payload.baseAddress!
+     let frameID = UInt32(littleEndian: base.loadUnaligned(as: UInt32.self))
+     let flags = Wire.Flag(rawValue: UInt32(littleEndian: base.loadUnaligned(fromByteOffset: 4, as: UInt32.self)))
++    var compactMap = false
++    var compactOutput = false
++    #if os(macOS)
++    compactMap = flags.contains(CarrotN16.mapFlag)
++    compactOutput = flags.contains(CarrotN16.outputFlag)
++    if compactMap || compactOutput {
++      // Validate negotiation, exact identity and size BEFORE touching queues.
++      guard let carrotN16, carrotN16.accepts(loaded.spec),
++            !(compactOutput && flags.contains(.wantHidden)) else { return InferReply(frameID: frameID, status: .badShape) }
++    }
++    #endif
++    let savedBytes = compactMap ? 256 * 256 * 3 : 0
++    guard message.payload.count == layout.requestBytes - savedBytes else { return InferReply(frameID: frameID, status: .badShape) }
++    let warped = base + Wire.inferReqSize
++    var packed = warped + layout.warpedBytes
++    #if os(macOS)
++    if compactMap {
++      let bytes = UnsafeRawBufferPointer(start: packed, count: message.payload.count - Wire.inferReqSize - layout.warpedBytes)
++      guard let expanded = carrotN16?.unpack(bytes, spec: loaded.spec) else { return InferReply(frameID: frameID, status: .badShape) }
++      packed = expanded
++    }
++    #endif
+     if flags.contains(.resetQueues) {
+       loaded.staging.reset()
+     }
+-    let warped = base + Wire.inferReqSize
+ 
+     var status = Wire.Status.ok
+     var queueUs: UInt32 = 0
+@@ -506,7 +531,7 @@
+     do {
+       // The packed floats stay where they arrived: every cast and copy of
+       // them reads unaligned, so they need no aligned copy first.
+-      try loaded.staging.stage(warped: warped, packed: warped + layout.warpedBytes)
++      try loaded.staging.stage(warped: warped, packed: packed)
+       queueUs = microseconds(since: started)
+       try loaded.engine.run()
+     } catch {
+@@ -542,10 +567,15 @@
+       status = .inferFailed
+     }
+ 
++    // Full-output finiteness and all recurrent feedback above are unchanged.
++    // Projection affects only the bytes of an already successful response.
++    let projected = compactOutput && status == .ok
+     let replied = status == .ok || status == .notFinite
+     return InferReply(
+       frameID: frameID, status: status, gpuUs: loaded.engine.lastGpuUs, queueUs: queueUs, totalUs: microseconds(since: started),
+-      outputCount: replied ? count : 0, hidden: replied && !flags.contains(.wantHidden) ? layout.hidden : nil,
++      outputCount: projected ? 2066 : (replied ? count : 0),
++      responseFlags: projected ? Wire.Flag(rawValue: 1 << 5) : [],
++      hidden: replied && !projected && !flags.contains(.wantHidden) ? layout.hidden : nil,
+       wantsState: flags.contains(.wantState), ran: true, failure: failure)
+   }
+ 
+diff --git a/JetlinkKit/Sources/JetlinkServer/CarrotN16.swift b/JetlinkKit/Sources/JetlinkServer/CarrotN16.swift
+new file mode 100644
+--- /dev/null
++++ b/JetlinkKit/Sources/JetlinkServer/CarrotN16.swift
+@@ -0,0 +1,69 @@
++#if os(macOS)
++import Foundation
++import CryptoKit
++
++/// Optional, exact-model transport extension. The engine always runs and validates
++/// its full outputs and retains all graph feedback before a reply is shortened.
++final class CarrotN16 {
++  static let capability = "carrot_mac_n16_transport_v1"
++  static let mapFlag = Wire.Flag(rawValue: 1 << 3)
++  static let outputFlag = Wire.Flag(rawValue: 1 << 5)
++  static let pixels = 256 * 256
++  static let count = 2066
++  static let fullCount = 18580
++  static let modelSHA = "01effc679eb46d6036ce0302673a87fe2dcfcc95a679daeeb929679e53c3647a"
++  static let specSHA = "63b2097c114bade03c5ec7ded978d73032a93bb525c03f9b78eddf49809f8b71"
++  static var descriptor: [String: Any] {
++    ["schema": 1, "model_sha256": modelSHA, "spec_sha256": specSHA,
++     "dtype": "float32-le", "start": 0, "count": count, "full_count": fullCount]
++  }
++
++  static func matches(_ value: Any?) -> Bool {
++    guard let record = value as? [String: Any], record.count == descriptor.count else { return false }
++    for key in ["schema", "start", "count", "full_count"] {
++      // Foundation bridges Bool and Float to NSNumber too; accept only JSON integers.
++      guard let n = record[key] as? NSNumber,
++            ["i", "s", "l", "q"].contains(String(cString: n.objCType)) else { return false }
++    }
++    guard let got = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys, .withoutEscapingSlashes]),
++          let expected = try? JSONSerialization.data(withJSONObject: descriptor, options: [.sortedKeys, .withoutEscapingSlashes]) else { return false }
++    return got == expected
++  }
++
++  static func eligible(_ spec: ModelSpec) -> Bool {
++    guard spec.stateful, spec.sha256 == modelSHA, spec.outputCount == fullCount,
++          let bytes = try? JSONSerialization.data(withJSONObject: spec.dictionary(), options: [.sortedKeys, .withoutEscapingSlashes]) else { return false }
++    return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() == specSHA
++  }
++
++  // Cache identity work and reuse the decode buffer. No per-frame allocation/hash.
++  private var checkedSpec: ModelSpec?
++  private var accepted = false
++  private let decoded = UnsafeMutableRawPointer.allocate(byteCount: 262380, alignment: 64)
++  deinit { decoded.deallocate() }
++
++  func accepts(_ spec: ModelSpec) -> Bool {
++    if checkedSpec != spec {
++      checkedSpec = spec
++      accepted = Self.eligible(spec)
++    }
++    return accepted
++  }
++
++  /// Reconstruct the original float32 packed input bit-for-bit. The sender uses
++  /// this only for canonical integer pixels; fractional values keep the full form.
++  func unpack(_ packed: UnsafeRawBufferPointer, spec: ModelSpec) -> UnsafeRawPointer? {
++    guard accepts(spec), packed.count == spec.packedBytes - Self.pixels * 3,
++          let map = spec.packedLayout.first(where: { $0.name == "nav_map" }),
++          map.range.count == Self.pixels, let source = packed.baseAddress else { return nil }
++    let prefix = map.range.lowerBound * 4
++    decoded.copyMemory(from: source, byteCount: prefix)
++    let out = (decoded + prefix).assumingMemoryBound(to: Float.self)
++    let bytes = (source + prefix).assumingMemoryBound(to: UInt8.self)
++    for i in 0..<Self.pixels { out[i] = Float(bytes[i]) }
++    let tail = spec.packedBytes - prefix - Self.pixels * 4
++    (decoded + prefix + Self.pixels * 4).copyMemory(from: source + prefix + Self.pixels, byteCount: tail)
++    return UnsafeRawPointer(decoded)
++  }
++}
++#endif
+diff --git a/JetlinkKit/Tests/JetlinkServerTests/CarrotN16Tests.swift b/JetlinkKit/Tests/JetlinkServerTests/CarrotN16Tests.swift
+new file mode 100644
+--- /dev/null
++++ b/JetlinkKit/Tests/JetlinkServerTests/CarrotN16Tests.swift
+@@ -0,0 +1,159 @@
++#if os(macOS)
++import Foundation
++import Testing
++import JetlinkKit
++import JetlinkTestSupport
++@testable import JetlinkServer
++
++// Same serialized suite as the HUD tests: sessions share the optional HUD owner.
++extension CarrotHUDTests {
++  private func n16Spec() throws -> ModelSpec {
++    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/carrot-n16-spec.json")
++    return try ModelSpec.from(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any])
++  }
++
++  @Test("Mac N16 capability and spec are exact; Bool, float and extra fields are refused")
++  func n16Identity() throws {
++    let spec = try n16Spec()
++    #expect(CarrotN16.eligible(spec))
++    #expect(CarrotN16.matches(CarrotN16.descriptor))
++    let badValues: [Any] = [true, 1.0, 2, "1"]
++    for bad in badValues {
++      var descriptor = CarrotN16.descriptor
++      descriptor["schema"] = bad
++      #expect(!CarrotN16.matches(descriptor))
++    }
++    var extra = CarrotN16.descriptor
++    extra["extra"] = 1
++    #expect(!CarrotN16.matches(extra))
++    var changed = spec.dictionary()
++    changed["sha256"] = String(repeating: "0", count: 64)
++    #expect(!CarrotN16.eligible(try ModelSpec.from(changed)))
++    changed = spec.dictionary()
++    changed["frame_skip"] = 2
++    #expect(!CarrotN16.eligible(try ModelSpec.from(changed)))
++  }
++
++  @Test("Mac N16 compact map reconstructs every original float32 bit, including the maneuver tail")
++  func n16Map() throws {
++    let spec = try n16Spec()
++    let map = try #require(spec.packedLayout.first { $0.name == "nav_map" }).range
++    let full = (0..<spec.packedCount).map { i -> Float in
++      map.contains(i) ? Float((i - map.lowerBound) % 256) : Float(i) / 8
++    }
++    var compact = full.withUnsafeBytes { Data($0.prefix(map.lowerBound * 4)) }
++    compact.append(contentsOf: (0..<CarrotN16.pixels).map { UInt8($0 % 256) })
++    compact.append(full.withUnsafeBytes { Data($0.suffix((spec.packedCount - map.upperBound) * 4)) })
++    let codec = CarrotN16()
++    compact.withUnsafeBytes { bytes in
++      let decoded = codec.unpack(bytes, spec: spec)!
++      #expect(Data(bytes: decoded, count: spec.packedBytes) == full.withUnsafeBytes { Data($0) })
++    }
++    let short = compact.dropLast()
++    short.withUnsafeBytes { #expect(codec.unpack($0, spec: spec) == nil) }
++  }
++
++  @Test("Mac N16 session validates before reset, preserves full/compact/full outputs and refuses omitted NaN")
++  func n16Session() throws {
++    let spec = try n16Spec()
++    let temp = try TemporaryDirectory()
++    let host = EngineHost(cache: try ServerCache(root: temp.url, backend: cpuBackend()))
++    let engine = try N16TestEngine()
++    let staging = N16TestStaging(spec: spec, engine: engine)
++    host.loaded = Loaded(sha256: spec.sha256, spec: spec, engine: engine, staging: staging)
++    let link = N16TestLink()
++    let session = Session(transport: link, host: host)
++    defer { session.close(); host.close() }
++    var seq: UInt32 = 0
++    func deliver(_ type: Wire.Msg, _ data: Data) throws {
++      seq += 1
++      try data.withUnsafeBytes { try session.handle(Message(msgType: type.rawValue, seq: seq, flags: 0, payload: $0)) }
++    }
++    func hello(_ negotiated: Bool) throws {
++      var client: [String: Any] = ["name": "n16-test"]
++      if negotiated { client[CarrotN16.capability] = CarrotN16.descriptor }
++      try deliver(.helloReq, JSONSerialization.data(withJSONObject: ["client": client]))
++      let response = try JSONSerialization.jsonObject(with: link.payload) as! [String: Any]
++      #expect((response[CarrotN16.capability] != nil) == negotiated)
++      try deliver(.engineReq, JSONSerialization.data(withJSONObject: ["sha256": spec.sha256, "nbytes": spec.nbytes, "frame_skip": spec.frameSkip]))
++    }
++    func frame(_ flags: Wire.Flag, short: Bool = false) throws {
++      var data = Data(count: Wire.inferReqSize)
++      data.withUnsafeMutableBytes {
++        $0.storeBytes(of: UInt32(17).littleEndian, as: UInt32.self)
++        $0.storeBytes(of: flags.rawValue.littleEndian, toByteOffset: 4, as: UInt32.self)
++      }
++      let packed = spec.packedBytes - (flags.contains(CarrotN16.mapFlag) ? CarrotN16.pixels * 3 : 0)
++      data.append(Data(count: spec.warpedBytes + packed - (short ? 1 : 0)))
++      try deliver(.inferReq, data)
++    }
++    func status() -> UInt32 { link.payload.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self)) } }
++    try hello(false)
++    try frame([.resetQueues, CarrotN16.mapFlag, CarrotN16.outputFlag])
++    #expect(status() == Wire.Status.badShape.rawValue && engine.runs == 0 && staging.resets == 0)
++    try hello(true)
++    try frame([.resetQueues, CarrotN16.mapFlag, CarrotN16.outputFlag], short: true)
++    #expect(status() == Wire.Status.badShape.rawValue && engine.runs == 0 && staging.resets == 0)
++    for compact in [false, true, false, true] {
++      let flags: Wire.Flag = compact ? [CarrotN16.mapFlag, CarrotN16.outputFlag] : [.wantHidden]
++      try frame(flags)
++      #expect(status() == Wire.Status.ok.rawValue)
++      let count = compact ? CarrotN16.count : CarrotN16.fullCount
++      #expect(link.payload.count == Wire.inferRespSize + count * 4)
++      #expect(link.flags.contains(CarrotN16.outputFlag) == compact)
++      let expected = (0..<count).map { Float($0) + Float(engine.runs) }
++      #expect(link.payload.dropFirst(Wire.inferRespSize) == expected.withUnsafeBytes { Data($0) })
++      #expect(staging.lastPacked == Data(count: spec.packedBytes))
++    }
++    engine.omittedNaN = true
++    try frame([CarrotN16.mapFlag, CarrotN16.outputFlag])
++    #expect(status() == Wire.Status.notFinite.rawValue)
++    #expect(!link.flags.contains(CarrotN16.outputFlag))
++    engine.omittedNaN = false
++    try hello(false) // re-HELLO must revoke the extension
++    let before = engine.runs
++    try frame([.resetQueues, CarrotN16.mapFlag, CarrotN16.outputFlag])
++    #expect(status() == Wire.Status.badShape.rawValue && engine.runs == before && staging.resets == 0)
++  }
++}
++
++private final class N16TestEngine: EngineCore, @unchecked Sendable {
++  var runs = 0
++  var omittedNaN = false
++  init() throws {
++    try super.init(inputs: [:], outputs: ["outputs": TensorSpec(name: "outputs", type: .float, shape: [1, CarrotN16.fullCount])])
++  }
++  override func execute() throws {
++    runs += 1
++    let output = buffer("outputs", parity: 0)!.assumingMemoryBound(to: Float.self)
++    for i in 0..<CarrotN16.fullCount { output[i] = Float(i) + Float(runs) }
++    if omittedNaN { output[CarrotN16.count + 1] = .nan }
++  }
++}
++private final class N16TestStaging: FrameStaging {
++  let layout: FrameLayout
++  let spec: ModelSpec
++  var resets = 0
++  var lastPacked = Data()
++  init(spec: ModelSpec, engine: any Engine) { self.spec = spec; layout = FrameLayout(spec: spec, engine: engine) }
++  func reset() { resets += 1 }
++  func newClient() {}
++  func keep(outputs: UnsafeRawPointer, type: ElementType) {}
++  func stage(warped: UnsafeRawPointer, packed: UnsafeRawPointer) throws { lastPacked = Data(bytes: packed, count: spec.packedBytes) }
++}
++private final class N16TestLink: MessageLink, @unchecked Sendable {
++  var peer: String { "n16-test" }
++  var medium: LinkMedium? { .usb3 }
++  var connectsOnOpen: Bool { true }
++  var payload = Data()
++  var flags: Wire.Flag = []
++  func recv() throws -> Message { throw LinkError.closed("test link") }
++  func sendParts(_ type: Wire.Msg, seq: UInt32, parts: UnsafeBufferPointer<UnsafeRawBufferPointer>, flags: Wire.Flag) throws {
++    payload = Data()
++    for part in parts { payload.append(contentsOf: part) }
++    self.flags = flags
++  }
++  func shutdown() {}
++  func close() {}
++}
++#endif
+diff --git a/JetlinkKit/Tests/JetlinkServerTests/Fixtures/carrot-n16-spec.json b/JetlinkKit/Tests/JetlinkServerTests/Fixtures/carrot-n16-spec.json
+new file mode 100644
+--- /dev/null
++++ b/JetlinkKit/Tests/JetlinkServerTests/Fixtures/carrot-n16-spec.json
+@@ -0,0 +1 @@
++{"checkpoint":"2931d3d9-7c90-4988-a6af-654ed71e0af5/56320/96244b1f-6c4e-4adc-848d-eccd0b44b182","frame_skip":4,"input_shapes":{"action_t":[1,2],"desire":[8],"nav_map":[1,1,256,256],"navigation":[1,47],"new_img":[2,6,128,256],"state_desire_q":[132,1,8],"state_feat_q":[128,1,16384],"state_img_q":[2,5,6,128,256],"state_map_features_q":[128,1,64],"state_navigation_features_q":[128,1,64],"traffic_convention":[1,2]},"nbytes":814591107,"output_shapes":{"next_state_desire_q":[132,1,8],"next_state_feat_q":[128,1,16384],"next_state_img_q":[2,5,6,128,256],"next_state_map_features_q":[128,1,64],"next_state_navigation_features_q":[128,1,64],"outputs":[1,18580]},"output_slices":{"action":[2062,2066],"desire_pred":[855,887],"desire_state":[2054,2062],"hidden_state":[2066,18450],"lane_lines":[0,528],"lane_lines_prob":[528,536],"lead":[1907,2051],"lead_prob":[2051,2054],"map_features":[18450,18514],"meta":[800,855],"navigation_features":[18514,18578],"pad":[18578,18580],"plan":[917,1907],"pose":[887,899],"road_edges":[536,800],"road_transform":[905,917],"wide_from_device_euler":[899,905]},"sha256":"01effc679eb46d6036ce0302673a87fe2dcfcc95a679daeeb929679e53c3647a"}
