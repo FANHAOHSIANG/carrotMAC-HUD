@@ -20,6 +20,15 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(prepare.CompatibilityError, '官方 protocol 2'):
             prepare.check_protocol('public static let protocolVersion: UInt16 = 2', 3)
 
+    def test_overlay_preserves_old_release_and_selects_api4_layout(self):
+        root = Path(__file__).resolve().parents[1]
+        for version, name in [('0.8.10', 'jetlink-mac-hud.patch'),
+                              ('0.8.12', 'jetlink-mac-hud.patch'),
+                              ('0.9.0', 'jetlink-mac-hud-api4.patch')]:
+            patches = prepare.overlay_patches(root, 3, version)
+            self.assertEqual(patches[0].name, name)
+            self.assertTrue(all(patch.is_file() for patch in patches))
+
     def test_missing_constant_blocked(self):
         with self.assertRaises(prepare.CompatibilityError):
             prepare.check_protocol('changed format', 2)
