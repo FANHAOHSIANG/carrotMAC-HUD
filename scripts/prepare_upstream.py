@@ -20,10 +20,12 @@ def check_protocol(source, expected):
         raise CompatibilityError(f'官方 protocol {actual}，目前 HUD/Carrot 配對 protocol {expected}；保留現有版本。')
 
 
-def overlay_patches(root, protocol):
+def overlay_patches(root, protocol, product_version="0.8.10"):
     if protocol == 3:
         directory = root / 'overlays/protocol3'
-        return (directory / 'jetlink-mac-hud.patch', directory / 'jetlink-autostart.patch', directory / 'jetlink-nav-inputs.patch')
+        version = tuple(int(part) for part in product_version.split('.'))
+        hud = 'jetlink-mac-hud-api4.patch' if version >= (0, 9, 0) else 'jetlink-mac-hud.patch'
+        return (directory / hud, directory / 'jetlink-autostart.patch', directory / 'jetlink-nav-inputs.patch')
     if protocol == 2:
         return (root / 'v1/jetlink-mac-hud.patch', root / 'AppAutostart/jetlink-autostart.patch')
     raise CompatibilityError(f'尚未適配 protocol {protocol}。')
@@ -51,7 +53,7 @@ def prepare(root, destination, reference):
     if not product:
         raise CompatibilityError('找不到正式版產品版本，需要人工適配。')
     versions['jetlink_version'] = product[1]
-    for patch in overlay_patches(root, versions['protocol']):
+    for patch in overlay_patches(root, versions['protocol'], product[1]):
         run('git', '-C', destination, 'apply', '--check', patch)
         run('git', '-C', destination, 'apply', patch)
     versions['jetlink_revision'] = sha
