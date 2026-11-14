@@ -1,0 +1,157 @@
+diff --git a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
+index c157fa6..2711f67 100644
+--- a/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
++++ b/JetlinkKit/Sources/JetlinkServer/EngineHost.swift
+@@ -364,6 +364,16 @@ public final class EngineHost: @unchecked Sendable {
+   private func start(_ job: Job, request: Request, entry: CacheEntry, modelPath: URL, spec: ModelSpec?) {
+     job.detail = job.loadOnly ? "loading engine" : "building engine"
+     lock.lock()
++    // request/preload inspect the disk without holding the inference lock.
++    // Another caller may have started (or finished) the same load meanwhile.
++    // Reserve the job atomically before launching a worker: two workers can
++    // otherwise unload each other's engine and write the same artifact.
++    if self.job?.state == .building
++      || (loaded?.sha256 == request.sha256 && loaded?.spec.frameSkip == request.frameSkip)
++    {
++      lock.unlock()
++      return
++    }
+     self.job = job
+     // The stage belongs to the job: a fresh job must not show the last one's 100 %.
+     lastStage = (nil, 0, "")
+diff --git a/JetlinkKit/Sources/JetlinkServer/ReadRing.swift b/JetlinkKit/Sources/JetlinkServer/ReadRing.swift
+index debe537..cdc28a2 100644
+--- a/JetlinkKit/Sources/JetlinkServer/ReadRing.swift
++++ b/JetlinkKit/Sources/JetlinkServer/ReadRing.swift
+@@ -48,9 +48,15 @@ final class ReadRing: @unchecked Sendable {
+   }
+ 
+   static let slotSize = Wire.gadgetTxAlign
+-  /// 512 KB: a whole 400 KB inference request streams without the reader
+-  /// posting anything, with slots to spare.
++  #if os(macOS)
++  /// N16 Nav requests observed on C4 occupy 41 aligned slots (656 KB).
++  /// Keep a 1 MB window on Mac, so an empty ring admits that whole request
++  /// without first waiting for the reader to consume and repost buffers.
++  static let depth = 64
++  #else
++  /// 512 KB for the other hosts; their USB memory limits are unchanged.
+   static let depth = 32
++  #endif
+ 
+   let lock: NSCondition
+   private unowned let pipe: any ReadRingPipe
+diff --git a/JetlinkKit/Tests/JetlinkServerTests/MacRuntimeTests.swift b/JetlinkKit/Tests/JetlinkServerTests/MacRuntimeTests.swift
+new file mode 100644
+index 0000000..1be84fa
+--- /dev/null
++++ b/JetlinkKit/Tests/JetlinkServerTests/MacRuntimeTests.swift
+@@ -0,0 +1,108 @@
++import Foundation
++import JetlinkKit
++import JetlinkTestSupport
++import Testing
++
++@testable import JetlinkServer
++
++/// Holds one parser open while another caller reserves the build. No sleeps
++/// determine the ordering, and no GPU or real USB device is required.
++private final class AdmissionBackend: EngineBackend, @unchecked Sendable {
++  private let inner = cpuBackend()
++  private let lock = NSLock()
++  private var parses = 0
++  let parsing = DispatchSemaphore(value: 0)
++  let releaseParse = DispatchSemaphore(value: 0)
++  let releaseBuild = DispatchSemaphore(value: 0)
++  let builds = Recorded<Int>()
++  let finished = Recorded<Int>()
++
++  var name: String { inner.name }
++  var suffix: String { inner.suffix }
++  var runtimeVersion: String { inner.runtimeVersion }
++  func deviceTag() -> String { inner.deviceTag() }
++
++  func deriveSpec(model: URL, sha256: String, nbytes: Int64, frameSkip: Int) throws -> ModelSpec {
++    let spec = try inner.deriveSpec(model: model, sha256: sha256, nbytes: nbytes, frameSkip: frameSkip)
++    let first = lock.withLock { parses += 1; return parses == 1 }
++    if first {
++      parsing.signal()
++      guard releaseParse.wait(timeout: .now() + 15) == .success else { throw TestError("parser gate timed out") }
++    }
++    return spec
++  }
++
++  func build(model: URL, artifact: URL, report: @escaping ProgressFn, metaExtra: [String: Any]) throws {
++    builds.append(1)
++    defer { finished.append(1) }
++    guard releaseBuild.wait(timeout: .now() + 15) == .success else { throw TestError("build gate timed out") }
++    // Admission is the behavior under test. Do not let the broken baseline's
++    // concurrent workers write the same artifact or outlive the temporary dir.
++    throw TestError("end of admission probe")
++  }
++
++  func load(artifact: URL, report: @escaping ProgressFn) throws -> any Engine {
++    throw TestError("admission probe must not load")
++  }
++}
++
++@Suite("Mac runtime regressions", .serialized)
++struct MacRuntimeTests {
++  @Test("Concurrent prepare callers reserve only one engine worker")
++  func concurrentPrepareAdmitsOneWorker() throws {
++    let tmp = try TemporaryDirectory()
++    let golden = try Golden("tiny_stateful")
++    let backend = AdmissionBackend()
++    let cache = try ServerCache(root: tmp.url, backend: backend)
++    let model = try Data(contentsOf: golden.model)
++    let request = try Request(sha256: golden.sha256, nbytes: Int64(model.count), frameSkip: 4)
++    try model.write(to: cache.modelPath(request))
++    let host = EngineHost(cache: cache)
++    defer {
++      backend.releaseParse.signal()
++      backend.releaseBuild.signal()
++      backend.releaseBuild.signal()
++      _ = backend.finished.wait { $0.count == backend.builds.all.count }
++      _ = host.settles(timeout: 10)
++      host.close()
++    }
++
++    let first = Background { _ = host.request(request, session: nil) }
++    try #require(backend.parsing.wait(timeout: .now() + 10) == .success)
++    let second = Background { _ = host.request(request, session: nil) }
++    try #require(backend.builds.wait { $0.count == 1 })
++    try #require(second.join()).get()
++    backend.releaseParse.signal()
++    try #require(first.join()).get()
++    // The old start() launches a second worker from the stale idle result.
++    #expect(!backend.builds.wait(timeout: 1) { $0.count > 1 })
++    #expect(backend.builds.all.count == 1)
++    #expect(host.snapshot().state == .building)
++  }
++
++  #if os(macOS)
++  @Test("An empty Mac read window admits a whole N16 Nav request")
++  func wholeNavRequestFitsReadWindow() throws {
++    let kernel = FakeUsbfs()
++    let pipes = UsbfsPipes(device: UsbfsDevice(kernel: kernel), inEndpoint: 0x81, outEndpoint: 0x01)
++    defer { pipes.close() }
++    let payload = Data((0..<(655_604 - Wire.headerSize)).map { UInt8(truncatingIfNeeded: $0 &* 7) })
++    let expected = FakeUsbfs.gadgetFrame(.inferReq, seq: 1, payload: payload)
++    kernel.feed(expected)
++    var got = [UInt8](repeating: 0, count: expected.count)
++    try got.withUnsafeMutableBytes { bytes in
++      var offset = try pipes.read(into: bytes.baseAddress!, count: Wire.headerSize, timeout: 2)
++      #expect(offset == Wire.headerSize)
++      // The simulated bus fills every posted slot immediately. Bytes left
++      // here need a second posting wave before this request can finish.
++      #expect(kernel.buffered == 0)
++      while offset < bytes.count {
++        let n = try pipes.read(into: bytes.baseAddress! + offset, count: bytes.count - offset, timeout: 2)
++        try #require(n > 0)
++        offset += n
++      }
++    }
++    #expect(got == expected)
++  }
++  #endif
++}

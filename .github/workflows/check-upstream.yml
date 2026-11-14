@@ -118,6 +118,11 @@ jobs:
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ProtocolTests
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter 'ServerTests/'
           swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ServerHooksTests
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter USBTransportTests
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter UsbfsPipesTests
+          swift test --package-path candidate-jetlink/JetlinkKit --arch arm64 --filter ArtifactInvalidTests
+      - name: Reproduce baseline runtime failures and verify the fixes
+        run: python3 scripts/check_runtime_regressions.py candidate-jetlink
       - name: Build and verify App
         run: |
           JETLINK_VERSION="$(python3 -c 'import json;print(json.load(open("candidate-versions.json"))["jetlink_version"])')" make -C candidate-jetlink/macos app

@@ -25,7 +25,10 @@ def overlay_patches(root, protocol, product_version="0.8.10"):
         directory = root / 'overlays/protocol3'
         version = tuple(int(part) for part in product_version.split('.'))
         hud = 'jetlink-mac-hud-api4.patch' if version >= (0, 9, 0) else 'jetlink-mac-hud.patch'
-        return (directory / hud, directory / 'jetlink-autostart.patch', directory / 'jetlink-nav-inputs.patch')
+        patches = (directory / hud, directory / 'jetlink-autostart.patch', directory / 'jetlink-nav-inputs.patch')
+        if version >= (0, 9, 0):
+            patches += (directory / 'jetlink-mac-runtime.patch',)
+        return patches
     if protocol == 2:
         return (root / 'v1/jetlink-mac-hud.patch', root / 'AppAutostart/jetlink-autostart.patch')
     raise CompatibilityError(f'尚未適配 protocol {protocol}。')
