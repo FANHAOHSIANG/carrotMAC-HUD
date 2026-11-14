@@ -1,4 +1,4 @@
-"""Install the display-only locale patch on the pinned Mac HUD renderer."""
+"""Install the display patches on the pinned Mac HUD renderer."""
 
 import argparse
 from contextlib import ExitStack
@@ -12,23 +12,24 @@ import sys
 from mac_install import revision, run
 
 
-def apply_hud_patch(carrot, patch, rollback):
+def apply_hud_patches(carrot, patches, rollback):
     command = ('git', '-C', carrot, 'apply')
     direction = ('--reverse',) if rollback else ()
     opposite = () if rollback else ('--reverse',)
-    check = subprocess.run(
-        [*command, *opposite, '--check', patch], capture_output=True, text=True,
-    )
-    if check.returncode == 0:
+    pending = [
+        patch for patch in patches
+        if subprocess.run([*command, *opposite, '--check', patch], capture_output=True).returncode
+    ]
+    if not pending:
         return False
-    run(*command, *direction, '--check', patch)
-    run(*command, *direction, patch)
+    run(*command, *direction, '--check', *pending)
+    run(*command, *direction, *pending)
     return True
 
 
 def main():
-    parser = argparse.ArgumentParser(description='更新或還原 Mac HUD 繁體中文顯示')
-    parser.add_argument('--rollback', action='store_true', help='還原繁中顯示補丁')
+    parser = argparse.ArgumentParser(description='更新或還原 Mac HUD 繁中與 P／R 檔畫面')
+    parser.add_argument('--rollback', action='store_true', help='還原 Mac HUD 畫面更新')
     args = parser.parse_args()
     if sys.platform != 'darwin':
         raise ValueError('請在 Mac 執行。')
@@ -41,7 +42,8 @@ def main():
         raise ValueError('Mac HUD 原始碼版本不相符。')
     if not (carrot / 'tools/jetlink/hud_runtime.py').is_file():
         raise ValueError('找不到已安裝的 Mac HUD helper。')
-    patch = root / 'overlays/protocol3/carrot-hud-zh-tw.patch'
+    overlays = root / 'overlays/protocol3'
+    patches = (overlays / 'carrot-hud-zh-tw.patch', overlays / 'carrot-hud-gear.patch')
     state = base / 'update'
     state.mkdir(exist_ok=True)
     runtime = Path(os.environ.get(
@@ -61,12 +63,12 @@ def main():
             raise ValueError('請先退出 Jetlink App。')
         if process.returncode != 1:
             process.check_returncode()
-        changed = apply_hud_patch(carrot, patch, args.rollback)
+        changed = apply_hud_patches(carrot, patches, args.rollback)
 
     if args.rollback:
-        print('Mac HUD 繁中更新已還原。' if changed else 'Mac HUD 已是還原狀態。')
+        print('Mac HUD 畫面更新已還原。' if changed else 'Mac HUD 已是還原狀態。')
     else:
-        print('Mac HUD 繁中更新完成。' if changed else 'Mac HUD 已套用繁中更新。')
+        print('Mac HUD 繁中與 P／R 檔畫面更新完成。' if changed else 'Mac HUD 已是最新畫面版本。')
         print('重新開啟原本的 Jetlink App，HUD 會跟隨 C4 的語言設定。')
 
 

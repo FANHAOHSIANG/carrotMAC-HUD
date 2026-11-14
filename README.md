@@ -2,15 +2,21 @@
 
 CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始碼補丁、Mac 更新腳本與官方更新檢查，不需要另外建立名為 jetlink 的 Fork。
 
-## Mac 外接 HUD 繁體中文更新
+## Mac 外接 HUD 繁中與 P／R 檔畫面更新
 
-適用於已安裝 CarrotMacHUD 的 Jetlink 0.9.0。更新沿用現有的 Jetlink App、模型及 C4 通訊協定。
+適用於已安裝 CarrotMacHUD 的 Jetlink 0.9.0。更新沿用現有的 Jetlink App、模型及 C4 通訊協定。先前已裝繁中版的使用者，請下載這一版再執行一次同名更新檔。
 
-1. 將 C4 更新到包含 `943db73f` 的 `test/carrot-wip-upstream-20261104`，把 C4 的語言設成「繁體中文」。
+1. C4 的 `test/carrot-wip-upstream-20261104` 在 `10141758` 及 `943db73f` 都具備 Mac P／R 畫面所需的資料。把 C4 的語言設成「繁體中文」。如也使用 C4 直接接的 HUD，該端繁中顯示需要包含 `943db73f` 的版本。
 2. 在本頁選 **Code → Download ZIP** 並解壓縮。退出 Jetlink App 及手動啟動的 HUD helper。
-3. 在 Mac 的 Terminal 執行 `bash `，把解壓縮後的 `Update-HUD-Zh-TW.command` 拖入視窗，按 Enter。完成後重新開啟原本的 Jetlink App。
+3. 在 Mac 的 Terminal 輸入 `bash `（後面留一個空格），把解壓縮後的 `Update-HUD-Zh-TW.command` 拖入視窗，按 Enter。完成後重新開啟原本的 Jetlink App。
 
-繁中涵蓋 Mac HUD 的駕駛資訊、已支援的狀態和導航文字，以及 ATC／TBT 文字提示。導航來源送來的圖片會照原樣顯示，圖片裡原有的韓文字會保留。需要還原時，退出 App 後用同樣的 Terminal 指令，在檔名後加上 ` --rollback`。
+- **P 檔駐車**顯示車輛圖、時間、電量、胎壓和本次行程。
+- **R 檔倒車**顯示方向盤角度、盲點狀態和 Ioniq 5／EV6 的估算軌跡。請直接確認原廠後方影像及周圍環境。
+- 繁中涵蓋駕駛資訊、已支援的狀態和導航文字，以及 ATC／TBT 文字提示。導航來源送來的圖片會照原樣顯示，圖片裡原有的韓中文字會保留。
+
+需要還原時，退出 App 後用同樣的 Terminal 指令，在檔名後加上 ` --rollback`。Mac 駐車畫面目前提供 C4 已轉送的車況與行程資料，尚未顯示 C4 的天氣資訊。
+
+車輛圖使用 CarrotPilot 的 [Ioniq 5／EV6 模型](https://github.com/FANHAOHSIANG/openpilot-carrot/tree/c8454993d2dbebe79010dcea0f3bfc5954f37222/openpilot/selfdrive/carrot/cluster/assets/models)，依 HUD 版面轉成去背點陣圖。Ioniq 5 原模型由 [andikapratamaw](https://sketchfab.com/3d-models/hyundai-ioniq-5-lowpoly-675e78311e8440d88714bd212cb7a8fb) 製作，EV6 原模型由 [Nazh Design](https://sketchfab.com/3d-models/2022-kia-ev6-gt-line-e14126e97cd14ad3a991fd32f5ec878b) 製作，採 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 授權。
 
 ## Protocol 3 更新版
 
