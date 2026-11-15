@@ -6,6 +6,8 @@
 
 **安裝方式**　退出 Jetlink 和 HUD helper → 解壓縮 ZIP → 在 Mac 執行 `Update-HUD-Zh-TW.command` → 重新開啟 Jetlink。
 
+**Mac mini 實機驗證（2026-11-15）**　Jetlink `0.9.0` 可完成更新，HUD 運作正常。此版修正既有 HUD 自訂造成的 P／R 補丁安裝失敗。[修正提交](https://github.com/FANHAOHSIANG/carrotMAC-HUD/commit/58dce3d1678438e451b95c1220f84813670a5c49)
+
 ## 高德號誌與測速提醒
 
 退出 Jetlink 與 HUD helper，再執行最新原始碼中的 `Update-HUD-Zh-TW.command`，完成後重新開啟 Jetlink。
