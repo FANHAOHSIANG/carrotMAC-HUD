@@ -17,6 +17,7 @@ from mac_install import revision, run
 
 RENDERER = 'openpilot/selfdrive/carrot/cluster/cluster_renderer.py'
 GEAR_PATCH = 'carrot-hud-gear.patch'
+NAV_LAYOUT_PATCH = 'carrot-hud-readable-nav.patch'
 
 
 def relocate_gear_render_hunk(carrot, patch, temporary):
@@ -72,6 +73,25 @@ def apply_hud_patches(carrot, patches, rollback):
     def applies(flags, patch):
         return subprocess.run([*command, *flags, '--check', patch], capture_output=True).returncode == 0
 
+    layout_to_install = None
+    if patches and patches[-1].name == NAV_LAYOUT_PATCH:
+        layout = patches[-1]
+        installed = applies(('--reverse',), layout)
+        if rollback and installed:
+            run(*command, '--reverse', layout)
+            try:
+                apply_hud_patches(carrot, patches[:-1], True)
+            except (OSError, ValueError, subprocess.CalledProcessError):
+                run(*command, layout)
+                raise
+            return True
+        if not rollback and installed:
+            return False
+        if rollback:
+            return apply_hud_patches(carrot, patches[:-1], True)
+        layout_to_install = layout
+        patches = patches[:-1]
+
     if tuple(patch.name for patch in patches[-2:]) == ('carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch'):
         alerts, placement = patches[-2:]
         if rollback:
@@ -81,6 +101,8 @@ def apply_hud_patches(carrot, patches, rollback):
         elif applies(('--reverse',), placement):
             # The later patch rewrites some of the earlier patch's hunks.
             patches = patches[:-2]
+    if layout_to_install is not None:
+        patches = (*patches, layout_to_install)
 
     applied = []
     with TemporaryDirectory(prefix='carrot-hud-patches-') as temporary:
@@ -124,6 +146,7 @@ def main():
     patches = tuple(overlays / name for name in (
         'carrot-hud-zh-tw.patch', GEAR_PATCH, 'carrot-hud-nav-clock.patch',
         'carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch',
+        NAV_LAYOUT_PATCH,
     ))
     state = base / 'update'
     state.mkdir(exist_ok=True)
