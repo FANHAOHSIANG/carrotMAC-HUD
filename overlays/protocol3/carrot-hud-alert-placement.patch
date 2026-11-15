@@ -1,0 +1,115 @@
+--- a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+@@ -3894,8 +3894,7 @@
+             if screen_mode == CLUSTER_SCREEN_MODE_DEBUG_SYSTEM:
+                 profile_stage = self._profile_start()
+                 self._draw_system_dashboard_panel(state)
+-                self._draw_navi_summary_alerts(state, self._information_panel_x(NAVI_LIVE_PANEL_X) + 165.0,
+-                                               NAVI_LIVE_PANEL_Y + 36.0)
++                self._draw_navi_summary_alerts(state)
+                 self._profile_add("hud.system_dashboard", profile_stage)
+                 self._draw_status_footer(state)
+                 return
+@@ -3916,8 +3915,7 @@
+             if screen_mode == CLUSTER_SCREEN_MODE_TRIP_REPORT:
+                 profile_stage = self._profile_start()
+                 self._draw_trip_report_panel(state)
+-                self._draw_navi_summary_alerts(state, self._information_panel_x(TRIP_REPORT_PANEL_X) + 165.0,
+-                                               TRIP_REPORT_PANEL_Y + 39.0)
++                self._draw_navi_summary_alerts(state)
+                 self._profile_add("hud.trip_report", profile_stage)
+             elif navi_debug_active:
+                 profile_stage = self._profile_start()
+@@ -5701,32 +5699,69 @@
+         self._draw_text(f"{arrow}{seconds - int(age)} s", x + (54.0 if colored else 48.0), y, 21.0, color, anchor="center")
+         return True
+ 
+-    def _draw_navi_summary_alerts(self, state: ClusterUiState, x: float, y: float) -> None:
++    def _draw_navi_summary_alerts(self, state: ClusterUiState) -> None:
+         navi = state.navi_live
+-        if navi is None or (navi.status is not None and navi.status.off_route):
++        if navi is not None and navi.status is not None and navi.status.off_route:
++            navi = None
++        offset = self._driving_panel_offset_design_x()
++        now = time.monotonic()
++        self._draw_summary_signal(navi, DESIGN_WIDTH * 0.46 + offset, 95.0, now)
++        self._draw_summary_camera(navi, DESIGN_WIDTH * 0.565 + offset, 306.0, now)
++
++    def _draw_summary_signal(self, navi: NaviLiveState | None, x: float, y: float, now: float) -> None:
++        signal = navi.traffic_light if navi is not None else None
++        if signal is None or signal.meta is None or not 0 <= now - signal.meta.received_mono_s < 2.5:
++            self._summary_green_since = None
+             return
+-        has_signal = self._draw_navi_signal_badge(navi, x, y)
+-        speed = navi.speed
+-        if speed is None or speed.meta is None or not 0 <= time.monotonic() - speed.meta.received_mono_s < 3.0:
+-            return
+-        if speed.section_active:
+-            label = self._text("section")
+-            limit = speed.section_speed_limit_kph
+-            distance = speed.section_remaining_distance_m
++
++        phase = None
++        remaining = signal.counter_s
++        if signal.source != "amap_link":
++            if signal.red_on is True:
++                phase, remaining = 0, signal.red_s or remaining
++            elif signal.straight_on is True:
++                phase, remaining = 2, signal.straight_s or remaining
++        if phase == 2:
++            green_since = getattr(self, "_summary_green_since", None)
++            if green_since is None:
++                green_since = signal.meta.received_mono_s
++                self._summary_green_since = green_since
++            if now - green_since >= 3.0:
++                return
+         else:
+-            label = "SDI"
+-            limit = speed.sdi_speed_limit_kph
+-            distance = speed.sdi_distance_m
+-            if speed.sdi_type in (None, -1, 22) or not limit:
+-                limit, distance = speed.secondary_sdi_speed_limit_kph, speed.secondary_sdi_distance_m
+-                if speed.secondary_sdi_type in (None, -1, 22):
+-                    return
+-        if not limit or distance is None or distance <= 0:
+-            return
+-        limit_text = f"{display_speed(limit, self.is_metric):.0f}"
+-        message = f"{label} {limit_text} / {self._format_navi_distance(distance)}"
+-        offset = 106.0 if has_signal else 0.0
+-        self._draw_text(self._ellipsize_text(message, 19.0, 282.0 - offset), x + offset, y, 19.0, AMBER)
++            self._summary_green_since = None
++
++        theme = self._current_theme()
++        seconds = None if remaining is None else remaining - int(now - signal.meta.received_mono_s)
++        if phase is None and (seconds is None or not 0 < seconds <= 999):
++            return
++        self._rounded_rect(x - 20.0, y - 72.0, 40.0, 100.0, 10.0, theme.panel_bg, theme.faint, 2.0)
++        for index, color in enumerate((NAVI_TRAFFIC_RED, AMBER, NAVI_TRAFFIC_GREEN)):
++            point = rl.Vector2(x, y - 53.0 + index * 31.0)
++            rl.draw_circle_v(point, 11.0, rl_color(color if phase == index else (80, 84, 90)))
++        if seconds is not None and 0 < seconds <= 999:
++            self._draw_text(f"{seconds} s", x, y + 48.0, 27.0, theme.text, anchor="center")
++
++    def _draw_summary_camera(self, navi: NaviLiveState | None, x: float, y: float, now: float) -> None:
++        speed = navi.speed if navi is not None else None
++        if speed is None or speed.meta is None or not 0 <= now - speed.meta.received_mono_s < 3.0:
++            return
++        notices = (
++            (speed.section_active, speed.section_speed_limit_kph, speed.section_remaining_distance_m),
++            (speed.sdi_type not in (None, -1, 22), speed.sdi_speed_limit_kph, speed.sdi_distance_m),
++            (speed.secondary_sdi_type not in (None, -1, 22),
++             speed.secondary_sdi_speed_limit_kph, speed.secondary_sdi_distance_m),
++        )
++        for valid, limit, distance in notices:
++            if valid and limit and distance is not None and distance > 0:
++                center = rl.Vector2(x, y)
++                rl.draw_circle_v(center, 33.0, rl_color(WHITE))
++                rl.draw_ring(center, 27.0, 33.0, 0.0, 360.0, 48, rl_color(RED))
++                self._draw_text(f"{display_speed(limit, self.is_metric):.0f}", x, y, 27.0,
++                                (20, 24, 28), anchor="center")
++                self._draw_text(self._format_navi_distance(distance), x, y + 53.0, 24.0,
++                                self._current_theme().text, anchor="center")
++                return
+ 
+     def _draw_navi_traffic_light_panel(
+         self,

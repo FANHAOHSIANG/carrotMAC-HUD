@@ -16,15 +16,24 @@ def apply_hud_patches(carrot, patches, rollback):
     command = ('git', '-C', carrot, 'apply')
     direction = ('--reverse',) if rollback else ()
     opposite = () if rollback else ('--reverse',)
-    pending = [
-        patch for patch in patches
-        if subprocess.run([*command, *opposite, '--check', patch], capture_output=True).returncode
-    ]
-    if not pending:
-        return False
-    run(*command, *direction, '--check', *pending)
-    run(*command, *direction, *pending)
-    return True
+    if not rollback and len(patches) >= 2 and patches[-1].name == 'carrot-hud-alert-placement.patch':
+        # The placement patch overlaps the earlier alert hunks, so reverse-check
+        # the newer patch when determining whether both are already installed.
+        if subprocess.run([*command, '--reverse', '--check', patches[-1]], capture_output=True).returncode == 0:
+            patches = patches[:-2]
+    applied = []
+    try:
+        for patch in reversed(patches) if rollback else patches:
+            if subprocess.run([*command, *opposite, '--check', patch], capture_output=True).returncode == 0:
+                continue
+            run(*command, *direction, '--check', patch)
+            run(*command, *direction, patch)
+            applied.append(patch)
+    except (OSError, subprocess.CalledProcessError):
+        for patch in reversed(applied):
+            run(*command, *opposite, patch)
+        raise
+    return bool(applied)
 
 
 def main():
@@ -44,7 +53,7 @@ def main():
         raise ValueError('找不到已安裝的 Mac HUD helper。')
     overlays = root / 'overlays/protocol3'
     patches = tuple(overlays / name for name in (
-        'carrot-hud-zh-tw.patch', 'carrot-hud-gear.patch', 'carrot-hud-nav-alerts.patch',
+        'carrot-hud-zh-tw.patch', 'carrot-hud-gear.patch', 'carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch',
     ))
     state = base / 'update'
     state.mkdir(exist_ok=True)
