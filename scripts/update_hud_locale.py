@@ -18,6 +18,7 @@ from mac_install import revision, run
 RENDERER = 'openpilot/selfdrive/carrot/cluster/cluster_renderer.py'
 GEAR_PATCH = 'carrot-hud-gear.patch'
 NAV_LAYOUT_PATCH = 'carrot-hud-readable-nav.patch'
+NAV_TEXT_ROUTE_PATCH = 'carrot-hud-nav-text-route.patch'
 
 
 def relocate_gear_render_hunk(carrot, patch, temporary):
@@ -73,8 +74,9 @@ def apply_hud_patches(carrot, patches, rollback):
     def applies(flags, patch):
         return subprocess.run([*command, *flags, '--check', patch], capture_output=True).returncode == 0
 
-    layout_to_install = None
-    if patches and patches[-1].name == NAV_LAYOUT_PATCH:
+    # Later overlays replace hunks from earlier ones, so unwind them first.
+    layers_to_install = []
+    while patches and patches[-1].name in (NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH):
         layout = patches[-1]
         installed = applies(('--reverse',), layout)
         if rollback and installed:
@@ -86,10 +88,11 @@ def apply_hud_patches(carrot, patches, rollback):
                 raise
             return True
         if not rollback and installed:
-            return False
+            patches = ()
+            break
         if rollback:
             return apply_hud_patches(carrot, patches[:-1], True)
-        layout_to_install = layout
+        layers_to_install.append(layout)
         patches = patches[:-1]
 
     if tuple(patch.name for patch in patches[-2:]) == ('carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch'):
@@ -101,8 +104,7 @@ def apply_hud_patches(carrot, patches, rollback):
         elif applies(('--reverse',), placement):
             # The later patch rewrites some of the earlier patch's hunks.
             patches = patches[:-2]
-    if layout_to_install is not None:
-        patches = (*patches, layout_to_install)
+    patches = (*patches, *reversed(layers_to_install))
 
     applied = []
     with TemporaryDirectory(prefix='carrot-hud-patches-') as temporary:
@@ -146,7 +148,7 @@ def main():
     patches = tuple(overlays / name for name in (
         'carrot-hud-zh-tw.patch', GEAR_PATCH, 'carrot-hud-nav-clock.patch',
         'carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch',
-        NAV_LAYOUT_PATCH,
+        NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH,
     ))
     state = base / 'update'
     state.mkdir(exist_ok=True)
