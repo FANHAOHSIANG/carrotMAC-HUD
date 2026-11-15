@@ -1,5 +1,11 @@
 # carrotMAC-HUD
 
+## [⬇️ 下載最新版 Mac HUD 更新 ZIP](https://github.com/FANHAOHSIANG/carrotMAC-HUD/archive/refs/heads/main.zip)
+
+適用於已安裝 CarrotMacHUD 的 Mac。包含繁中介面、P／R 檔畫面、高德紅綠燈倒數與測速提醒。
+
+**安裝方式**　退出 Jetlink 和 HUD helper → 解壓縮 ZIP → 在 Mac 執行 `Update-HUD-Zh-TW.command` → 重新開啟 Jetlink。
+
 ## 高德號誌與測速提醒
 
 退出 Jetlink 與 HUD helper，再執行最新原始碼中的 `Update-HUD-Zh-TW.command`，完成後重新開啟 Jetlink。
@@ -17,7 +23,7 @@ CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始�
 適用於已安裝 CarrotMacHUD 的 Jetlink 0.9.0。更新沿用現有的 Jetlink App、模型及 C4 通訊協定。先前已裝繁中版的使用者，請下載這一版再執行一次同名更新檔。
 
 1. C4 的 `test/carrot-wip-upstream-20261104` 在 `10141758` 及 `943db73f` 都具備 Mac P／R 畫面所需的資料。把 C4 的語言設成「繁體中文」。如也使用 C4 直接接的 HUD，該端繁中顯示需要包含 `943db73f` 的版本。
-2. 在本頁選 **Code → Download ZIP** 並解壓縮。退出 Jetlink App 及手動啟動的 HUD helper。
+2. 從本頁頂部下載最新版 ZIP 並解壓縮。退出 Jetlink App 及手動啟動的 HUD helper。
 3. 在 Mac 的 Terminal 輸入 `bash `（後面留一個空格），把解壓縮後的 `Update-HUD-Zh-TW.command` 拖入視窗，按 Enter。完成後重新開啟原本的 Jetlink App。
 
 - **P 檔駐車**顯示車輛圖、時間、電量、胎壓和本次行程。
