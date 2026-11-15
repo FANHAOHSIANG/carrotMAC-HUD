@@ -19,6 +19,7 @@ RENDERER = 'openpilot/selfdrive/carrot/cluster/cluster_renderer.py'
 GEAR_PATCH = 'carrot-hud-gear.patch'
 NAV_LAYOUT_PATCH = 'carrot-hud-readable-nav.patch'
 NAV_TEXT_ROUTE_PATCH = 'carrot-hud-nav-text-route.patch'
+MODE7_MAP_PATCH = 'carrot-hud-mode7-map.patch'
 
 
 def relocate_gear_render_hunk(carrot, patch, temporary):
@@ -76,7 +77,7 @@ def apply_hud_patches(carrot, patches, rollback):
 
     # Later overlays replace hunks from earlier ones, so unwind them first.
     layers_to_install = []
-    while patches and patches[-1].name in (NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH):
+    while patches and patches[-1].name in (NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH, MODE7_MAP_PATCH):
         layout = patches[-1]
         installed = applies(('--reverse',), layout)
         if rollback and installed:
@@ -148,7 +149,7 @@ def main():
     patches = tuple(overlays / name for name in (
         'carrot-hud-zh-tw.patch', GEAR_PATCH, 'carrot-hud-nav-clock.patch',
         'carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch',
-        NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH,
+        NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH, MODE7_MAP_PATCH,
     ))
     state = base / 'update'
     state.mkdir(exist_ok=True)

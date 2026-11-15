@@ -8,6 +8,8 @@
 
 繁中 HUD 優先使用 Mac 的中文字型。若來源文字已含一串問號或替代字元，優先顯示可讀的路名或方向欄位，保留仍有效的箭頭和距離。來源傳來的點陣影像會原樣呈現。此版仍待 Mac、TURZX 實機驗收。
 
+模式 7（`ClusterHudScreenMode=7`）保留駕駛畫面，右側加入深色導航卡。全導航（模式 6）也使用同一套地圖、路線與轉彎指引的選擇方式。兩個模式的紅綠燈倒數和測速牌均可並排顯示。高德車機版、高德一般版及 Google NOO 依收到的資料顯示即時地圖、青藍路線，或轉彎與剩餘距離。高德兩個來源的原 App 地圖底圖仍須由 Android 傳送地圖影像，HUD 的路線卡可用現有導航資料顯示。
+
 ## [⬇️ 下載最新版 Mac HUD 更新 ZIP](https://github.com/FANHAOHSIANG/carrotMAC-HUD/archive/refs/heads/stable.zip)
 
 此入口提供最新通過實車測試的版本。適用於已安裝 CarrotMacHUD 的 Mac，包含繁中介面、P／R 檔畫面、高德紅綠燈倒數與測速提醒。
