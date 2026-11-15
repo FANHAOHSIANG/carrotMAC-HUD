@@ -1,5 +1,14 @@
 # carrotMAC-HUD
 
+## 高德號誌與測速提醒
+
+退出 Jetlink 與 HUD helper，再執行最新原始碼中的 `Update-HUD-Zh-TW.command`，完成後重新開啟 Jetlink。
+全導航與小地圖沿用官方號誌區，有號誌圖片時優先顯示圖片。
+駕駛摘要、系統資訊的標題旁可同時顯示號誌與一筆測速。
+車機版使用有明確狀態的燈色和倒數，手機版只顯示中性倒數。
+測速使用既有 SDI 執法速限與距離，收到區間測速時優先顯示區間剩餘距離。
+手機版號誌需要 Carrot Bridge wide.71 的倒數輸出。神盾接續在 Carrot Bridge 顯示，手機版測速仍待實測封包。
+
 CarrotPilot → Mac JetLink → TURZX HUD。這裡管理可閱讀的 HUD 原始碼補丁、Mac 更新腳本與官方更新檢查，不需要另外建立名為 jetlink 的 Fork。
 
 ## Mac 外接 HUD 繁中與 P／R 檔畫面更新

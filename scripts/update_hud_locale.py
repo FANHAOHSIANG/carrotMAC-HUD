@@ -28,7 +28,7 @@ def apply_hud_patches(carrot, patches, rollback):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='更新或還原 Mac HUD 繁中與 P／R 檔畫面')
+    parser = argparse.ArgumentParser(description='更新或還原 Mac HUD 繁中、P／R 檔與導航提醒畫面')
     parser.add_argument('--rollback', action='store_true', help='還原 Mac HUD 畫面更新')
     args = parser.parse_args()
     if sys.platform != 'darwin':
@@ -43,7 +43,9 @@ def main():
     if not (carrot / 'tools/jetlink/hud_runtime.py').is_file():
         raise ValueError('找不到已安裝的 Mac HUD helper。')
     overlays = root / 'overlays/protocol3'
-    patches = (overlays / 'carrot-hud-zh-tw.patch', overlays / 'carrot-hud-gear.patch')
+    patches = tuple(overlays / name for name in (
+        'carrot-hud-zh-tw.patch', 'carrot-hud-gear.patch', 'carrot-hud-nav-alerts.patch',
+    ))
     state = base / 'update'
     state.mkdir(exist_ok=True)
     runtime = Path(os.environ.get(
@@ -68,7 +70,7 @@ def main():
     if args.rollback:
         print('Mac HUD 畫面更新已還原。' if changed else 'Mac HUD 已是還原狀態。')
     else:
-        print('Mac HUD 繁中與 P／R 檔畫面更新完成。' if changed else 'Mac HUD 已是最新畫面版本。')
+        print('Mac HUD 繁中、P／R 檔與導航提醒畫面更新完成。' if changed else 'Mac HUD 已是最新畫面版本。')
         print('重新開啟原本的 Jetlink App，HUD 會跟隨 C4 的語言設定。')
 
 
