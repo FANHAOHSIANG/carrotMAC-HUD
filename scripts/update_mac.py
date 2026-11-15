@@ -50,7 +50,8 @@ def main():
         env = dict(os.environ, CARROT_HUD_DIR=str(root.parent / 'test-hud-runtime'),
                    JETLINK_VERSION=versions['jetlink_version'])
         run('swift', 'test', '--package-path', candidate / 'JetlinkKit', '--filter', 'CarrotHUDTests', env=env)
-        for suite in ('SpecTests', 'ProtocolTests', 'ServerTests/', 'ServerHooksTests'):
+        for suite in ('SpecTests', 'ProtocolTests', 'ServerTests/', 'ServerHooksTests',
+                      'MacRuntimeTests', 'USBTransportTests', 'UsbfsPipesTests', 'ArtifactInvalidTests'):
             run('swift', 'test', '--package-path', candidate / 'JetlinkKit', '--filter', suite, env=env)
         run('make', '-C', candidate / 'macos', 'app', env=env)
         new_app = candidate / 'macos/build/Jetlink.app'
