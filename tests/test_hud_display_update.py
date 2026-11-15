@@ -51,3 +51,24 @@ class HudDisplayUpdateTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             apply_hud_patches(self.repo, self.patches, False)
         self.assertEqual(self.renderer.read_text(), local)
+
+    def test_dependent_display_patches_roll_back_twice(self):
+        alerts = self.gear.with_name('carrot-hud-nav-alerts.patch')
+        alerts.write_text(self.gear.read_text())
+        placement = alerts.with_name('carrot-hud-alert-placement.patch')
+        intermediate = self.base.replace('gear_screen = False', 'gear_screen = True')
+        final = intermediate.replace('gear_screen = True', 'gear_screen = "new"')
+        placement.write_text(''.join(unified_diff(
+            intermediate.splitlines(keepends=True), final.splitlines(keepends=True),
+            'a/renderer.py', 'b/renderer.py', n=1,
+        )))
+        patches = (self.locale, alerts, placement)
+
+        self.assertFalse(apply_hud_patches(self.repo, patches, True))
+        self.assertTrue(apply_hud_patches(self.repo, patches[:-1], False))
+        self.assertTrue(apply_hud_patches(self.repo, patches, False))
+        self.assertFalse(apply_hud_patches(self.repo, patches, False))
+        self.assertIn('gear_screen = "new"', self.renderer.read_text())
+        self.assertTrue(apply_hud_patches(self.repo, patches, True))
+        self.assertFalse(apply_hud_patches(self.repo, patches, True))
+        self.assertEqual(self.renderer.read_text(), self.base)

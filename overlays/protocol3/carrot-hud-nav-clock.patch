@@ -1,0 +1,21 @@
+diff --git a/tools/jetlink/hud.py b/tools/jetlink/hud.py
+index 85686cc..cf68708 100644
+--- a/tools/jetlink/hud.py
++++ b/tools/jetlink/hud.py
+@@ -123,5 +123,16 @@ class RemoteSubMaster:
+         if reader.which() != name:
+           raise ValueError('display service identity mismatch')
+         self.data[name] = reader.as_builder()
++      if name == 'carrotNavi':
++        # C4 item receipt times use the same clock as the snapshot's sent time.
++        # The host renderer expires alerts against its own monotonic clock.
++        navi = self.data[name].carrotNavi
++        offset_ns = round(shift * 1e9)
++        for item in (navi.vehicle, navi.guidanceCurrent, navi.guidanceNext,
++                     navi.laneCurrent, *navi.laneAhead, navi.speed, navi.trafficSignal,
++                     navi.crossroad, navi.route, navi.navigationStatus):
++          meta = item.meta
++          if meta.present and meta.receivedMonoTimeNanos > 0:
++            meta.receivedMonoTimeNanos = max(1, meta.receivedMonoTimeNanos + offset_ns)
+       self.generations[name] = mono
+       self.updated[name] = True

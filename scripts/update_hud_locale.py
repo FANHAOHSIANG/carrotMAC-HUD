@@ -16,10 +16,14 @@ def apply_hud_patches(carrot, patches, rollback):
     command = ('git', '-C', carrot, 'apply')
     direction = ('--reverse',) if rollback else ()
     opposite = () if rollback else ('--reverse',)
-    if not rollback and len(patches) >= 2 and patches[-1].name == 'carrot-hud-alert-placement.patch':
-        # The placement patch overlaps the earlier alert hunks, so reverse-check
-        # the newer patch when determining whether both are already installed.
-        if subprocess.run([*command, '--reverse', '--check', patches[-1]], capture_output=True).returncode == 0:
+    if tuple(patch.name for patch in patches[-2:]) == ('carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch'):
+        alerts, placement = patches[-2:]
+        if rollback:
+            # If the alert patch is absent, the dependent placement patch is absent too.
+            if subprocess.run([*command, '--check', alerts], capture_output=True).returncode == 0:
+                patches = patches[:-1]
+        elif subprocess.run([*command, '--reverse', '--check', placement], capture_output=True).returncode == 0:
+            # The later patch rewrites some of the earlier patch's hunks.
             patches = patches[:-2]
     applied = []
     try:
@@ -53,7 +57,8 @@ def main():
         raise ValueError('找不到已安裝的 Mac HUD helper。')
     overlays = root / 'overlays/protocol3'
     patches = tuple(overlays / name for name in (
-        'carrot-hud-zh-tw.patch', 'carrot-hud-gear.patch', 'carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch',
+        'carrot-hud-zh-tw.patch', 'carrot-hud-gear.patch', 'carrot-hud-nav-clock.patch',
+        'carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch',
     ))
     state = base / 'update'
     state.mkdir(exist_ok=True)
