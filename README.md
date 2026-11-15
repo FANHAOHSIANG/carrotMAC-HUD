@@ -1,8 +1,8 @@
 # carrotMAC-HUD
 
-## [⬇️ 下載最新版 Mac HUD 更新 ZIP](https://github.com/FANHAOHSIANG/carrotMAC-HUD/archive/refs/heads/main.zip)
+## [⬇️ 下載最新版 Mac HUD 更新 ZIP](https://github.com/FANHAOHSIANG/carrotMAC-HUD/archive/refs/heads/stable.zip)
 
-適用於已安裝 CarrotMacHUD 的 Mac。包含繁中介面、P／R 檔畫面、高德紅綠燈倒數與測速提醒。
+此入口提供最新通過實車測試的版本。適用於已安裝 CarrotMacHUD 的 Mac，包含繁中介面、P／R 檔畫面、高德紅綠燈倒數與測速提醒。
 
 **安裝方式**　退出 Jetlink 和 HUD helper → 解壓縮 ZIP → 在 Mac 執行 `Update-HUD-Zh-TW.command` → 重新開啟 Jetlink。
 
@@ -102,6 +102,8 @@ GitHub Actions 每 6 小時檢查官方最新正式 release（台灣時間約 02
 若 Actions 尚未允許執行，按 GitHub 顯示的啟用按鈕。同步 job 已設定 contents: write，使用內建 GITHUB_TOKEN，無需 PAT；若 repository 分支規則禁止自動推送，該次同步會失敗並保留原版本。
 
 ## 維護方式
+
+每次有新版通過實車測試，將 `stable` 分支更新到已驗證的提交，並在首頁下載入口下方記錄驗證日期與適用版本。下載網址固定使用 `stable.zip`。
 
 Protocol 3 的 HUD 傳輸與 App 啟動補丁在 overlays/protocol3/；
 helper 原始碼在 AppAutostart/mac_hud_supervisor.py。官方更新導致衝突時，需要先修補這些差異並更新測試。
