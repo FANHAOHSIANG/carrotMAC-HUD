@@ -22,6 +22,64 @@ NAV_TEXT_ROUTE_PATCH = 'carrot-hud-nav-text-route.patch'
 MODE7_MAP_PATCH = 'carrot-hud-mode7-map.patch'
 
 
+NATIVE_MODE7 = '''            if screen_mode == CLUSTER_SCREEN_MODE_NAV_MODEL:
+                self._draw_driving_hud_content(state, screen_mode, left_signal_lit, right_signal_lit)
+                self._draw_nav_model_map()
+                self._draw_status_footer(state)
+                return
+'''
+NATIVE_MODE7_HEADER = '            if screen_mode == CLUSTER_SCREEN_MODE_NAV_MODEL:\n'
+
+
+def adapt_native_mode7(carrot, patches, temporary):
+    source = (carrot / RENDERER).read_text(encoding='utf-8')
+    if NATIVE_MODE7_HEADER not in source:
+        return patches
+
+    adapted = []
+    for patch in patches:
+        if patch.name == NAV_LAYOUT_PATCH:
+            body = patch.read_text(encoding='utf-8')
+            # The native mode-7 branch follows the assignment on both sides of the patch.
+            old = '             if screen_mode == CLUSTER_SCREEN_MODE_NAVI:\n'
+            head, tail = body.split(old, 1)
+            context = ''.join(' ' + line for line in NATIVE_MODE7.splitlines(keepends=True))
+            body = head.replace('@@ -3850,8 +3850,8 @@', '@@ -3850,13 +3850,13 @@', 1) + context + old + tail
+        elif patch.name == MODE7_MAP_PATCH:
+            body = patch.read_text(encoding='utf-8')
+            header = f'diff --git a/{RENDERER} b/{RENDERER}\n'
+            section = body[body.index(header):]
+            index = section.index('@@ -3854,')
+            next_hunk = section.index('@@ ', section.index('\n', index) + 1)
+            file_header = section[:section.index('@@ ')]
+            new_call = (
+                '                if (getattr(state, "navi_live", None) is not None\n'
+                '                        or getattr(state, "external_nav_active", False)):\n'
+                '                    self._draw_mode7_map_card(state)\n'
+                '                else:\n'
+                '                    self._draw_nav_model_map()\n'
+            )
+            before_call = '                self._draw_nav_model_map()\n'
+            context_head, context_tail = NATIVE_MODE7.split(before_call)
+            # Keep the installation's existing mode-7 constant, config and world-view positioning.
+            hunk = '@@ -3857,8 +3857,12 @@ class ClusterUiRenderer:\n'
+            hunk += ''.join(' ' + line for line in context_head.splitlines(keepends=True))
+            hunk += '-' + before_call
+            hunk += ''.join('+' + line for line in new_call.splitlines(keepends=True))
+            context_tail += '            if screen_mode == CLUSTER_SCREEN_MODE_NAVI:\n'
+            context_tail += '                self._draw_navi_dashboard(state)\n'
+            context_tail += '                self._draw_status_footer(state)\n'
+            hunk += ''.join(' ' + line for line in context_tail.splitlines(keepends=True))
+            body = file_header + hunk + section[next_hunk:]
+        else:
+            adapted.append(patch)
+            continue
+        output = Path(temporary) / patch.name
+        output.write_text(body, encoding='utf-8')
+        adapted.append(output)
+    return tuple(adapted)
+
+
 def relocate_gear_render_hunk(carrot, patch, temporary):
     """Refresh the context for the additive P/R hook, retaining strict checks elsewhere."""
     sections = re.split(r'(?m)(?=^diff --git )', patch.read_text(encoding='utf-8'))
@@ -68,6 +126,12 @@ def relocate_gear_render_hunk(carrot, patch, temporary):
 
 
 def apply_hud_patches(carrot, patches, rollback):
+    with TemporaryDirectory(prefix='carrot-hud-mode7-') as temporary:
+        patches = adapt_native_mode7(carrot, patches, temporary)
+        return _apply_hud_patches(carrot, patches, rollback)
+
+
+def _apply_hud_patches(carrot, patches, rollback):
     command = ('git', '-C', carrot, 'apply')
     direction = ('--reverse',) if rollback else ()
     opposite = () if rollback else ('--reverse',)
@@ -83,7 +147,7 @@ def apply_hud_patches(carrot, patches, rollback):
         if rollback and installed:
             run(*command, '--reverse', layout)
             try:
-                apply_hud_patches(carrot, patches[:-1], True)
+                _apply_hud_patches(carrot, patches[:-1], True)
             except (OSError, ValueError, subprocess.CalledProcessError):
                 run(*command, layout)
                 raise
@@ -92,7 +156,7 @@ def apply_hud_patches(carrot, patches, rollback):
             patches = ()
             break
         if rollback:
-            return apply_hud_patches(carrot, patches[:-1], True)
+            return _apply_hud_patches(carrot, patches[:-1], True)
         layers_to_install.append(layout)
         patches = patches[:-1]
 
