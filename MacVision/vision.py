@@ -11,14 +11,16 @@ CACHE = Path(os.environ.get("CARROT_HUD_DIR", Path.home() / "Library/Caches/io.z
 KINDS = {"person", "motorcycle", "bicycle", "car", "truck", "bus"}
 
 
-def packet_frame(data, now):
+def packet_frame(data, now, wall_now):
     received, = struct.unpack_from("<d", data)
     packet = json.loads(data[8:])
     frame = packet["cameras"]["road"]
     age = packet["sent"] - frame.get("capture_time", frame["time"])
-    if not (0 <= now - received < .5 and 0 <= age < .4):
+    # Swift writes receipt time as Unix epoch. HUD expiry uses local monotonic time.
+    receipt_age = wall_now - received
+    if not (0 <= receipt_age < .5 and 0 <= age < .4):
         return None
-    return (frame["frame"], frame["time"]), received - age, base64.b64decode(frame["jpeg"], validate=True)
+    return (frame["frame"], frame["time"]), now - receipt_age - age, base64.b64decode(frame["jpeg"], validate=True)
 
 
 def detect(model, image, cone=False):
@@ -69,8 +71,16 @@ def main():
     previous = []
     last_stamp = 0
     CACHE.mkdir(parents=True, exist_ok=True)
+    last_report = time.monotonic()
+    processed = detected = 0
+    status = "等待 Jetlink 封包"
+    print("Mac Vision 已啟動，等待 ROAD 影像", flush=True)
     try:
         while True:
+            if not video and time.monotonic() - last_report >= 5:
+                print(f"Mac Vision｜近五秒推論 {processed} 幀，含物件 {detected} 幀｜{status}", flush=True)
+                last_report = time.monotonic()
+                processed = detected = 0
             if video:
                 ok, image = video.read()
                 if not ok:
@@ -78,12 +88,16 @@ def main():
             else:
                 time.sleep(.06)
                 try:
-                    item = packet_frame((CACHE / "snapshot.packet").read_bytes(), time.monotonic())
-                    if not item or item[0] == last_key:
+                    item = packet_frame((CACHE / "snapshot.packet").read_bytes(), time.monotonic(), time.time())
+                    if not item:
+                        status = "收到過期影格"
+                        continue
+                    if item[0] == last_key:
                         continue
                     last_key, stamp, jpeg = item
                     image = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
-                except (KeyError, ValueError, struct.error, OSError, TypeError):
+                except (KeyError, ValueError, struct.error, OSError, TypeError) as exc:
+                    status = f"等待 ROAD：{type(exc).__name__} {exc}"
                     continue
                 if image is None:
                     continue
@@ -102,6 +116,10 @@ def main():
                     cv2.putText(image, kind, (int(x*w),int(y*h)), cv2.FONT_HERSHEY_SIMPLEX,.55,(0,210,255),2)
                 writer.write(image)
             else:
+                processed += 1
+                detected += bool(objects)
+                latency = (time.monotonic() - stamp) * 1000
+                status = f"結果延遲 {latency:.0f} ms，物件 " + (", ".join(o[0] for o in objects) or "0")
                 tmp = CACHE / f"vision-{os.getpid()}.tmp"
                 tmp.write_text(json.dumps([stamp,objects]))
                 tmp.replace(CACHE / "vision.json")
