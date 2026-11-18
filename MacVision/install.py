@@ -2,6 +2,7 @@ from pathlib import Path
 import subprocess
 import shutil
 import sys
+from tempfile import TemporaryDirectory
 
 dest = Path(sys.argv[1])
 path = dest / "cluster_renderer.py"
@@ -29,9 +30,19 @@ patch = Path(__file__).with_name("ego-lamps.patch").resolve()
 git_apply = ["git", "-C", str(dest.resolve().parents[3]), "apply"]
 direction = ["--reverse"] if remove else []
 opposite = [] if remove else ["--reverse"]
-if subprocess.run([*git_apply, *opposite, "--check", str(patch)], capture_output=True).returncode:
-    subprocess.run([*git_apply, *direction, str(patch)], check=True)
-    src = path.read_text()
+with TemporaryDirectory() as temporary:
+    # P/R display inserts gear_valid immediately after onroad in cluster_live.
+    live = (dest / "cluster_live.py").read_text()
+    if "            gear_valid=gear_valid,\n" in live:
+        body = patch.read_text().replace(
+            "             alert=self._live_cluster_alert(state.alert, onroad),\n",
+            "             gear_valid=gear_valid,\n", 1,
+        )
+        patch = Path(temporary) / patch.name
+        patch.write_text(body)
+    if subprocess.run([*git_apply, *opposite, "--check", str(patch)], capture_output=True).returncode:
+        subprocess.run([*git_apply, *direction, str(patch)], check=True)
+        src = path.read_text()
 updated = src.replace(anchor+hook, anchor).replace(footer+notice, footer)
 updated = updated.replace(ioniq_loop, vehicle_loop)
 if not remove:
