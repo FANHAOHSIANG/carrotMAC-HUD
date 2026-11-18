@@ -23,18 +23,48 @@ def location(p, u, v):
         return -left, forward
 
 
+_last_report = 0.
+
+
+def report_drawn(count):
+    global _last_report
+    now = time.monotonic()
+    if now-_last_report >= .25:
+        _last_report = now
+        tmp = RESULT.with_name(f"drawn-{os.getpid()}.tmp")
+        tmp.write_text(json.dumps([now,count]))
+        tmp.replace(RESULT.with_name("vision-drawn.json"))
+
+
+def draw_crosswalk_notice():
+    import pyray as rl
+    try:
+        stamp, objects = json.loads(RESULT.read_bytes())
+        if 0 <= time.monotonic()-stamp < .9 and any(o[0] == "crosswalk" for o in objects):
+            rl.draw_rectangle(18, 72, 148, 32, rl.DARKGRAY)
+            for i in range(4):
+                rl.draw_rectangle(24+i*5, 81, 3, 14, rl.WHITE)
+            rl.draw_text("CROSSWALK", 52, 80, 17, rl.YELLOW)
+    except (OSError, ValueError, TypeError, IndexError):
+        pass
+
+
 def draw(renderer, state, shift, ego_y):
     import pyray as rl
     try:
         stamp, objects = json.loads(RESULT.read_bytes())
         if not 0 <= time.monotonic() - stamp < .9 or not objects:
+            report_drawn(0)
             return
         if state.camera_calibration_euler is None or state.road_transform_trans is None:
             return
         p = renderer._camera_overlay_projection(state)
         if p is None or p.wide_camera:
             return
+        drawn = 0
         for kind,u,v,w,h in objects[:32]:
+            if kind == "crosswalk":
+                continue
             if not all(map(math.isfinite,(u,v,w,h))) or not 0 < u < 1:
                 continue
             point = location(p,u,v)
@@ -59,5 +89,7 @@ def draw(renderer, state, shift, ego_y):
                 large = kind != "car"
                 rl.draw_cube(pos(0,0,.64),2 if large else 1.7,5 if large else 3.7,1.1,rl.GRAY)
                 rl.draw_cube(pos(0,0,1.45),1.8 if large else 1.4,4.8 if large else 2.1,1.1 if large else .55,rl.LIGHTGRAY)
+            drawn += 1
+        report_drawn(drawn)
     except (OSError, ValueError, TypeError, AttributeError, IndexError, ZeroDivisionError):
         return

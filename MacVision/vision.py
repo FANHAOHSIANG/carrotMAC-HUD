@@ -61,11 +61,16 @@ def main():
     args = parser.parse_args()
     if args.video and args.video.resolve() == Path(args.output).resolve():
         parser.error("Use a separate output file")
+    from crosswalk import Crosswalk
+    from preview import Preview
+    crossing = Crosswalk()
     vehicle = YOLO("yolo11n.pt")
     cone = YOLO("cone.onnx", task="detect")
     video = cv2.VideoCapture(str(args.video)) if args.video else None
     if video and not video.isOpened():
         raise SystemExit("Cannot open input video")
+    preview = Preview(CACHE) if not video else None
+    fps = 0.
     writer = None
     last_key = None
     previous = []
@@ -77,8 +82,13 @@ def main():
     print("Mac Vision 已啟動，等待 ROAD 影像", flush=True)
     try:
         while True:
+            if preview:
+                preview.show()
+                if not preview.running():
+                    break
             if not video and time.monotonic() - last_report >= 5:
                 print(f"Mac Vision｜近五秒推論 {processed} 幀，含物件 {detected} 幀｜{status}", flush=True)
+                fps = processed / (time.monotonic() - last_report)
                 last_report = time.monotonic()
                 processed = detected = 0
             if video:
@@ -106,6 +116,7 @@ def main():
                 last_stamp = stamp
             objects = smooth(previous, detect(vehicle, image) + detect(cone, image, True))
             previous = objects
+            objects = objects + crossing.detect(image)
             if video:
                 h, w = image.shape[:2]
                 if writer is None:
@@ -123,11 +134,14 @@ def main():
                 tmp = CACHE / f"vision-{os.getpid()}.tmp"
                 tmp.write_text(json.dumps([stamp,objects]))
                 tmp.replace(CACHE / "vision.json")
+                preview.show(image, objects, stamp, fps)
     finally:
         if video:
             video.release()
         if writer:
             writer.release()
+        if preview:
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
