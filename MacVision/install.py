@@ -12,6 +12,15 @@ hook = ("            from mac_vision_overlay import draw as draw_mac_vision\n"
 footer = '        self._profile_add("hud.git_status", profile_stage)\n'
 notice = ("        from mac_vision_overlay import draw_crosswalk_notice\n"
           "        draw_crosswalk_notice()\n")
+vehicle_loop = "            for vehicle in scene.vehicles:\n"
+ioniq_loop = """            if scene.vehicles:
+                from ioniq5_model import draw as draw_ioniq5
+                self._draw_vehicle_shadow(scene.vehicles[0])
+                draw_ioniq5(scene.vehicles[0])
+            for vehicle in scene.vehicles[1:]:
+"""
+if src.count(vehicle_loop) + src.count(ioniq_loop) != 1:
+    sys.exit("Unsupported ego vehicle layout. No files changed.")
 if src.count(anchor) != 1 or src.count(footer) != 1:
     sys.exit("Unsupported renderer layout. No files changed.")
 remove = "--remove" in sys.argv
@@ -24,7 +33,10 @@ if subprocess.run([*git_apply, *opposite, "--check", str(patch)], capture_output
     subprocess.run([*git_apply, *direction, str(patch)], check=True)
     src = path.read_text()
 updated = src.replace(anchor+hook, anchor).replace(footer+notice, footer)
+updated = updated.replace(ioniq_loop, vehicle_loop)
 if not remove:
+    shutil.copyfile(Path(__file__).with_name("ioniq5_model.py"), dest / "ioniq5_model.py")
+    updated = updated.replace(vehicle_loop, ioniq_loop)
     shutil.copyfile(Path(__file__).with_name("mac_vision_overlay.py"), dest / "mac_vision_overlay.py")
     updated = updated.replace(anchor, anchor+hook).replace(footer, footer+notice)
 if updated != src:
