@@ -11,3 +11,7 @@
 也可以從解壓縮資料夾啟動 Carrot Vision.app。請將它與 Start-Mac-Vision.command 保存在同一資料夾。第一次會下載並驗證約 49 MB 的斑馬線模型。USB 接收仍由 Jetlink 提供。
 
 [斑馬線模型來源、授權及限制](https://github.com/TonyBinheWu/sunnypilot/blob/83b562a5f21596e81f7e2bd50b41aa7b75d2a796/openpilot/selfdrive/carrot/web/vendor/road-detector/NOTICE.md)
+
+### 自車尾燈
+
+退出 Jetlink，執行本版 `Start-Mac-Vision.command` 後再開啟 Jetlink。3D 車道畫面會在自車車尾顯示紅色煞車燈與琥珀色方向燈。煞車燈讀取 comma 回報的 carState.brakeLights。左右方向燈與 HUD 箭頭共用閃爍節奏，雙黃燈兩側同閃。煞車與轉向可以同時顯示。車況訊號失效時熄滅燈號。安裝完成後，尾燈顯示直接讀取車況，不依賴鏡頭辨識。

@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import shutil
 import sys
 
@@ -14,6 +15,14 @@ notice = ("        from mac_vision_overlay import draw_crosswalk_notice\n"
 if src.count(anchor) != 1 or src.count(footer) != 1:
     sys.exit("Unsupported renderer layout. No files changed.")
 remove = "--remove" in sys.argv
+# Apply the lamp layer separately so existing Vision installations can upgrade.
+patch = Path(__file__).with_name("ego-lamps.patch").resolve()
+git_apply = ["git", "-C", str(dest.resolve().parents[3]), "apply"]
+direction = ["--reverse"] if remove else []
+opposite = [] if remove else ["--reverse"]
+if subprocess.run([*git_apply, *opposite, "--check", str(patch)], capture_output=True).returncode:
+    subprocess.run([*git_apply, *direction, str(patch)], check=True)
+    src = path.read_text()
 updated = src.replace(anchor+hook, anchor).replace(footer+notice, footer)
 if not remove:
     shutil.copyfile(Path(__file__).with_name("mac_vision_overlay.py"), dest / "mac_vision_overlay.py")
