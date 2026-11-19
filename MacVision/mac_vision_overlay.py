@@ -114,7 +114,7 @@ def draw_detection_notice(offset_x):
 
 
 class VehicleMatches:
-    """Confirm isolated pairs across distinct ROAD captures in road coordinates."""
+    """One visible body per matched ROAD/native target; confirm class separately."""
     def __init__(self):
         self.reset()
 
@@ -122,54 +122,91 @@ class VehicleMatches:
         self.stamp = None
         self.previous = []
         self.current = []
+        self.previous_free = []
+        self.current_free = []
 
     def match(self, stamp, points, targets):
         if stamp != self.stamp:
-            consecutive = self.stamp is not None and 0 < stamp - self.stamp < .55
-            self.previous = self.current if consecutive else []
+            recent = self.stamp is not None and 0 < stamp - self.stamp < .55
+            self.previous = self.current if recent else []
+            self.previous_free = self.current_free if recent else []
             self.stamp = stamp
-        pairs = []
+        candidates = []
+        nearby_previous = [
+            [kind for kind, px, py in self.previous if abs(tx - px) < .85 and abs(ty - py) < 3.2]
+            for tx, ty in targets
+        ]
         for i, (kind, x, y) in enumerate(points):
             if kind not in ("car", "truck", "bus", "motorcycle"):
                 continue
             for j, (tx, ty) in enumerate(targets):
-                if abs(x-tx) < .85 and abs(y-ty) < min(3.2, 1.5 + .045*y):
-                    pairs.append((i, j))
-        confirmed = {}
-        current = []
-        for i, j in pairs:
-            if any((i == k or j == n) and (i, j) != (k, n) for k, n in pairs):
+                # Reuse a recent isolated match through modest projection jitter.
+                previous_kinds = nearby_previous[j]
+                lateral = 1.15 if previous_kinds else .85
+                fore = min(3.2, 1.5 + .045*y) * (1.25 if previous_kinds else 1.)
+                dx, dy = abs(x - tx), abs(y - ty)
+                if dx < lateral and dy < fore:
+                    candidates.append(((dx / lateral)**2 + (dy / fore)**2, i, j, previous_kinds))
+        matched = {}
+        bikes = set()
+        used = set()
+        self.current = []
+        for _, i, j, previous_kinds in sorted(candidates):
+            if i in matched or j in used:
                 continue
-            kind, x, y = points[i]
-            tx, ty = targets[j]
-            if any(kind == old and abs(tx-px) < .85 and abs(ty-py) < 3.2
-                   for old, px, py in self.previous):
-                confirmed[i] = j
-            current.append((kind, tx, ty))
-        self.current = current
-        return confirmed
+            matched[i] = j
+            used.add(j)
+            # An ambiguous observation can suppress one duplicate body, but cannot
+            # change a native car into a motorcycle or corroborate the next frame.
+            if any((k == i or n == j) and (k, n) != (i, j) for _, k, n, _ in candidates):
+                continue
+            kind = points[i][0]
+            if kind == "motorcycle" and "motorcycle" in previous_kinds:
+                bikes.add(i)
+            self.current.append((kind, *targets[j]))
+        # Only draw an unpaired car after observations in two successive captures.
+        # A missed capture ends that admission. Re-reading vision.json at HUD
+        # refresh rate cannot turn a single detector frame into multiple hits.
+        standalone = [(i, x, y) for i, (kind, x, y) in enumerate(points)
+                      if kind in ("car", "truck", "bus") and i not in matched]
+        self.current_free = [(x, y) for _, x, y in standalone]
+        free_pairs = []
+        for i, x, y in standalone:
+            for j, (px, py) in enumerate(self.previous_free):
+                dx, dy = abs(x - px), abs(y - py)
+                if dx < .85 and dy < 3.2:
+                    free_pairs.append(((dx/.85)**2 + (dy/3.2)**2, i, j))
+        free = set()
+        used_previous = set()
+        for _, i, j in sorted(free_pairs):
+            if i not in free and j not in used_previous:
+                free.add(i)
+                used_previous.add(j)
+        return matched, bikes, free
 
 
 _matches = VehicleMatches()
 
 
-def draw(renderer, state, shift, ego_y, native=()):
+def draw(renderer, state, shift, _ego_y, native=()):
     global _scene_feedback
     objects, reason, stamp = read_objects()
     drawn = 0
     drawn_bikes = set()
-    if not objects:
+    if stamp is None:
         _matches.reset()
-    if objects:
+    elif not objects:
+        _matches.match(stamp, [], [])
+    else:
         try:
-            drawn, reason = draw_world(renderer, state, shift, ego_y, objects, stamp, native, drawn_bikes)
+            drawn, reason = draw_world(renderer, state, shift, objects, stamp, native, drawn_bikes)
         except (ValueError, TypeError, AttributeError, IndexError, ZeroDivisionError) as error:
             reason = f"projection: {type(error).__name__}"
     _scene_feedback = (objects, drawn, reason)
     return drawn_bikes
 
 
-def draw_world(renderer, state, shift, ego_y, objects, stamp, native, drawn_bikes):
+def draw_world(renderer, state, shift, objects, stamp, native, drawn_bikes):
     import pyray as rl
     angles = state.camera_calibration_euler
     if angles is None or len(angles) != 3 or not all(map(math.isfinite, angles)):
@@ -190,20 +227,36 @@ def draw_world(renderer, state, shift, ego_y, objects, stamp, native, drawn_bike
         if outside_road(state, *point):
             continue
         points.append((kind, *point))
-    targets = [(v.center.x + shift, v.center.y - ego_y) for v in native]
-    merged = _matches.match(stamp, points, targets)
+    # Native center.y is a rendered distance (half scale in 3D plus a lead
+    # bumper offset). The ROAD contact point and longitudinal_m use real meters.
+    age = max(0., time.time() - stamp)
+    targets = []
+    native_indices = []
+    for index, vehicle in enumerate(native):
+        distance = vehicle.longitudinal_m
+        if not isinstance(distance, (int, float)) or not math.isfinite(distance) or distance <= 0:
+            continue
+        speed = vehicle.relative_speed_mps
+        if isinstance(speed, (int, float)) and math.isfinite(speed):
+            distance -= speed * age
+        targets.append((vehicle.center.x + shift, distance))
+        native_indices.append(index)
+    merged, bikes, standalone = _matches.match(stamp, points, targets)
+    from cluster_scene import render_scene_forward_m
     for i, (kind, right, forward) in enumerate(points):
         if i in merged:
-            if kind != "motorcycle":
+            if i not in bikes:
                 continue
-            index = merged[i]
+            index = native_indices[merged[i]]
             vehicle = native[index]
-            if vehicle.source.startswith("modelV2") or vehicle.source == "radarState":
+            if native_road_vehicle(vehicle):
                 draw_native_bike(rl, vehicle)
                 drawn_bikes.add(index)
                 drawn += 1
-                continue
-        x, y = right-shift, forward+ego_y
+            continue
+        if kind in ("car", "truck", "bus") and i not in standalone:
+            continue
+        x, y = right-shift, render_scene_forward_m(forward, state)
         def pos(dx,dy,z):
             return rl.Vector3(x+dx,y+dy,z)
         def upright(z1,z2,r1,r2,color):
@@ -234,7 +287,11 @@ def draw_world(renderer, state, shift, ego_y, objects, stamp, native, drawn_bike
                     rl.draw_cylinder_ex(pos(*a),pos(*b),.035,.035,6,rl.SKYBLUE)
         elif kind in ("car","bus","truck"):
             large = kind != "car"
-            rl.draw_cube(pos(0,0,.64),2 if large else 1.7,5 if large else 3.7,1.1,rl.GRAY)
+            length = 5. if large else 3.7
+            # The visible ground contact locates the near face of this proxy.
+            # Centering a whole car on it lets its body protrude toward the ego.
+            y += length / 2
+            rl.draw_cube(pos(0,0,.64),2 if large else 1.7,length,1.1,rl.GRAY)
             for dx in (-1.,1.):
                 for dy in (-1.,1.):
                     wheel_x = dx*(.96 if large else .84)
@@ -256,6 +313,13 @@ def draw_world(renderer, state, shift, ego_y, objects, stamp, native, drawn_bike
     if not drawn:
         return 0, "outside ground view"
     return drawn, "estimated height" if state.road_transform_trans is None else "projected"
+
+
+def native_road_vehicle(vehicle):
+    source = vehicle.source
+    return (source.startswith("modelV2") or source.partition("+radar:")[0] == "radarState"
+            or bool(source and (vehicle.primary or vehicle.cut_in)
+                    and vehicle.longitudinal_m is not None and vehicle.longitudinal_m > 0))
 
 
 def draw_native_bike(rl, vehicle):

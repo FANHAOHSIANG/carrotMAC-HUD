@@ -7,7 +7,7 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 SRC = Path(__file__).resolve().parent
 REL = Path("openpilot/selfdrive/carrot/cluster")
-FILES = ("cluster_models.py", "cluster_live.py", "cluster_renderer.py")
+FILES = ("cluster_models.py", "cluster_live.py", "cluster_renderer.py", "cluster_scene.py", "cluster_route_replay.py")
 MODULES = ("hud_style.py", "ioniq5_model.py", "mac_vision_overlay.py", "hud_road_edges.py")
 LOOP = "            for vehicle in scene.vehicles:\n"
 LEGACY_MODEL_LOOP = """            if scene.vehicles:
@@ -33,18 +33,24 @@ ROAD_EDGE_HOOKS = (
     ('cluster_live.py', '        return replace(\n            state,\n            onroad=onroad,\n',
      '        from hud_road_edges import filter_live_targets\n        if self._service_alive("modelV2") and self._service_valid("modelV2"):\n            state = filter_live_targets(state, self._service_receive_time("modelV2"), now)\n'),
 )
+LEGACY_CAR_MARKER = ('        self._draw_vehicle_box(marker_vehicle)\n',
+     '        if vehicle.source.startswith("modelV2") or vehicle.source == "radarState":\n'
+     '            from mac_vision_overlay import draw_native_car\n'
+     '            draw_native_car(self, vehicle, Vec3)\n'
+     '        else:\n'
+     '            self._draw_vehicle_box(marker_vehicle)\n')
 HOOKS = (
     (LOOP, MODEL_LOOP),
     ("LEAD_ONE_DISTANCE_FONT_SIZE = 24\n", "LEAD_ONE_DISTANCE_FONT_SIZE = 28\n"),
     ("LEAD_ONE_SPEED_FONT_SIZE = 22\n", "LEAD_ONE_SPEED_FONT_SIZE = 26\n"),
     ("            lead = replace(lead, lines=tuple(",
      "            lead = replace(lead, color=(255, 94, 94), lines=tuple("),
-    ('        self._draw_vehicle_box(marker_vehicle)\n',
-     '        if vehicle.source.startswith("modelV2") or vehicle.source == "radarState":\n'
-     '            from mac_vision_overlay import draw_native_car\n'
+    ('    def _draw_vehicle(self, vehicle: VehicleBox) -> None:\n',
+     '    def _draw_vehicle(self, vehicle: VehicleBox) -> None:\n'
+     '        from mac_vision_overlay import native_road_vehicle, draw_native_car\n'
+     '        if native_road_vehicle(vehicle):\n'
      '            draw_native_car(self, vehicle, Vec3)\n'
-     '        else:\n'
-     '            self._draw_vehicle_box(marker_vehicle)\n'),
+     '            return\n'),
     ('        self._profile_add("hud.git_status", profile_stage)\n',
      '        self._profile_add("hud.git_status", profile_stage)\n'
      '        from mac_vision_overlay import draw_detection_notice\n'
@@ -85,6 +91,8 @@ def install(dest, remove):
         source = source.replace(LEGACY_MODEL_LOOP, LOOP).replace(
             '            from mac_vision_overlay import draw as draw_mac_vision\n'
             '            draw_mac_vision(self, state, scene.scene_shift_x_m, EGO_FORWARD_M, scene.vehicles[1:])\n', '')
+        marker, installed = LEGACY_CAR_MARKER
+        source = source.replace(installed, marker)
         for before, after in HOOKS:
             source = source.replace(after, before)
         renderer.write_text(source)
@@ -96,10 +104,11 @@ def install(dest, remove):
         patch_path.write_text(patch)
         cmd = ["git", "apply"]
         opposite = [] if remove else ["--reverse"]
-        if subprocess.run(cmd + opposite + ["--check", str(patch_path)], cwd=root,
-                          capture_output=True).returncode:
-            direction = ["--reverse"] if remove else []
-            subprocess.run(cmd + direction + [str(patch_path)], cwd=root, check=True)
+        for layer in (patch_path, SRC / 'traffic-paint.patch'):
+            if subprocess.run(cmd + opposite + ["--check", str(layer)], cwd=root,
+                              capture_output=True).returncode:
+                direction = ["--reverse"] if remove else []
+                subprocess.run(cmd + direction + [str(layer)], cwd=root, check=True)
         for name, anchor, addition in ROAD_EDGE_HOOKS:
             path = stage / name
             data = path.read_text().replace(addition + anchor, anchor)

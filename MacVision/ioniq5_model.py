@@ -25,23 +25,28 @@ def lamp_geometry(style, brake, left, right):
         faces.append((rgb, ((x-w/2,y,z-h/2),(x+w/2,y,z-h/2),
                             (x+w/2,y,z+h/2),(x-w/2,y,z+h/2))))
 
-    # Black hatch insert and a separate high-mounted brake strip in the spoiler.
-    rect(0,.52,.93,.285,TRIM,-.530)
-    # Four silver pixels identify the hatch even when the lamps are off.
+    # The centers follow the reduced body. Lens dimensions use the original HUD box.
+    # This keeps the two rows distinct at the small on-road drawing size.
+    rect(0, .505, .93, .336, TRIM, -.530)
     for x in (-.063, -.021, .021, .063):
-        rect(x,.515,.024,.029,(170,182,191))
-    rect(0,.922,.42,.045,(255,56,52) if brake else (53,36,40),-.397)
-    n = {"factory": 4, "night": 3, "large": 2}[style]
-    width = {"factory": .275, "night": .325, "large": .355}[style]
-    for sign, turning in ((-1,left),(1,right)):
-        for i in range(n):
-            x = sign*(.45 - (i+.5)*width/n)
-            rect(x,.545,.87*width/n,.137 if style == "large" else .105,
-                 (255,42,45) if brake else (100,38,45))
-            rect(x,.416,.85*width/n,.085 if style == "large" else .063,
-                 (255,186,35) if turning else (68,53,40))
+        rect(x, .515, .024, .029, (170, 182, 191))
+    rect(0, .922, .49 / EGO_MESH_SCALE, .061 / EGO_MESH_SCALE,
+         (255, 56, 52) if brake else (53, 36, 40), -.397)
+    pixels, bank_width, red_height, amber_height = {
+        "factory": (4, .315, .133, .097),
+        "night": (3, .322, .138, .101),
+        "large": (2, .333, .144, .105),
+    }[style]
+    pitch = bank_width / (pixels * EGO_MESH_SCALE)
+    for side, turning in ((-1, left), (1, right)):
+        for i in range(pixels):
+            x = side * (.45 - (i + .5) * pitch)
+            rect(x, .575, .88 * pitch, red_height / EGO_MESH_SCALE,
+                 (255, 42, 45) if brake else (83, 33, 39))
+            rect(x, .412, .88 * pitch, amber_height / EGO_MESH_SCALE,
+                 (255, 186, 35) if turning else (60, 47, 38))
             if brake:
-                rect(x,.56,.62*width/n,.027,(255,149,125),-.538)
+                rect(x, .593, .66 * pitch, .031 / EGO_MESH_SCALE, (255, 149, 125), -.538)
     return tuple(faces)
 
 
