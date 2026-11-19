@@ -8,6 +8,8 @@
 
 預設使用 01 原廠像素 IONIQ 5，隱藏懸浮方向箭頭，顯示速限圓牌。速限需要導航或車況提供資料。車尾方向燈和煞車燈依車況顯示。這些設定適用於有行車軌跡的全螢幕 3D、模式 0、1、2、4、5 和 7。
 
+搭配已加入 IONIQ 5 儀表速限的 `test/tony-carrot-wip-integrated-20261117` 時，Mac 會透過 Jetlink 接收道路速限。HUD 優先顯示既有的有效車載速限，其次是儀表速限。儀表訊號歸零或逾時，則採用可用的導航速限。這個欄位只供 HUD 顯示。更新既有安裝時，退出 Jetlink 與 HUD helper，再執行本測試版的 `Update-HUD-Zh-TW.command`，完成後重開 Jetlink。
+
 要分別切換兩個浮標或改車模，雙擊本資料夾的 `Configure-HUD.command`。選 1 使用原廠像素車模，懸浮箭頭選 0、速限圓牌選 1。結束 Jetlink 與 HUD helper 後，從同一個資料夾執行 `Start-IONIQ5-HUD.command`，依終端機提示重開 Jetlink。
 
 ## [⬇️ 下載最新版 Mac HUD 更新 ZIP](https://github.com/FANHAOHSIANG/carrotMAC-HUD/archive/refs/heads/stable.zip)

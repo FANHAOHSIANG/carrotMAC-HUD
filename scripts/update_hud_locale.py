@@ -21,6 +21,7 @@ NAV_LAYOUT_PATCH = 'carrot-hud-readable-nav.patch'
 NAV_TEXT_ROUTE_PATCH = 'carrot-hud-nav-text-route.patch'
 ALERT_POSITION_PATCH = 'carrot-hud-alert-positions.patch'
 MODE7_MAP_PATCH = 'carrot-hud-mode7-map.patch'
+CLUSTER_LIMIT_PATCH = 'carrot-hud-cluster-speed-limit.patch'
 
 
 NATIVE_MODE7 = '''            if screen_mode == CLUSTER_SCREEN_MODE_NAV_MODEL:
@@ -33,6 +34,8 @@ NATIVE_MODE7_HEADER = '            if screen_mode == CLUSTER_SCREEN_MODE_NAV_MOD
 
 
 def adapt_native_mode7(carrot, patches, temporary):
+    if not any(patch.name in (NAV_LAYOUT_PATCH, MODE7_MAP_PATCH) for patch in patches):
+        return patches
     source = (carrot / RENDERER).read_text(encoding='utf-8')
     if NATIVE_MODE7_HEADER not in source:
         return patches
@@ -142,7 +145,7 @@ def _apply_hud_patches(carrot, patches, rollback):
 
     # Later overlays replace hunks from earlier ones, so unwind them first.
     layers_to_install = []
-    while patches and patches[-1].name in (NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH, MODE7_MAP_PATCH, ALERT_POSITION_PATCH):
+    while patches and patches[-1].name in (NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH, MODE7_MAP_PATCH, ALERT_POSITION_PATCH, CLUSTER_LIMIT_PATCH):
         layout = patches[-1]
         installed = applies(('--reverse',), layout)
         if rollback and installed:
@@ -214,7 +217,7 @@ def main():
     patches = tuple(overlays / name for name in (
         'carrot-hud-zh-tw.patch', GEAR_PATCH, 'carrot-hud-nav-clock.patch',
         'carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch',
-        NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH, MODE7_MAP_PATCH, ALERT_POSITION_PATCH,
+        NAV_LAYOUT_PATCH, NAV_TEXT_ROUTE_PATCH, MODE7_MAP_PATCH, ALERT_POSITION_PATCH, CLUSTER_LIMIT_PATCH,
     ))
     state = base / 'update'
     state.mkdir(exist_ok=True)
