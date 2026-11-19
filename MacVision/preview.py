@@ -20,7 +20,7 @@ class Preview:
         self.cache = cache
         self.last = 0
         cv2.namedWindow(self.title, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.title, 880, 340)
+        cv2.resizeWindow(self.title, 1008, 420)
 
     def show(self, image=None, objects=(), stamp=None, fps=0):
         import cv2
@@ -28,24 +28,24 @@ class Preview:
         now = time.monotonic()
         if image is None and now-self.last < .9:
             return
-        panel = np.zeros((340,880,3), dtype=np.uint8)
+        panel = np.zeros((420,1008,3), dtype=np.uint8)
         def label(s,x,y):
             cv2.putText(panel,s,(x,y),cv2.FONT_HERSHEY_SIMPLEX,.55,(220,224,232),1,cv2.LINE_AA)
         if image is None:
             label("Waiting for fresh ROAD image", 20,160)
         else:
-            panel[:320,:512] = cv2.resize(image,(512,320))
+            panel[:400,:640] = cv2.resize(image,(640,400))
             for kind,x,y,w,h in objects:
-                a,b = int((x-w/2)*512), int((y-h)*320)
-                cv2.rectangle(panel,(a,b),(int((x+w/2)*512),int(y*320)),(90,220,220),1)
+                a,b = int((x-w/2)*640), int((y-h)*400)
+                cv2.rectangle(panel,(a,b),(int((x+w/2)*640),int(y*400)),(90,220,220),1)
                 label(kind,max(2,a),max(18,b))
             self.last = now
-        label("USB ROAD / Mac inference",530,36)
-        label(f"{fps:.1f} fps",530,75)
+        label("USB ROAD / Mac inference",660,36)
+        label(f"{fps:.1f} fps",660,75)
         if stamp is not None:
-            label(f"Capture to result: {(time.time()-stamp)*1000:.0f} ms",530,105)
-            label(f"Detected: {len(objects)}",530,137)
-        label(hud_feedback(self.cache),530,178)
+            label(f"Capture to result: {(time.time()-stamp)*1000:.0f} ms",660,105)
+            label(f"Detected: {len(objects)}",660,137)
+        label(hud_feedback(self.cache),660,178)
         cv2.imshow(self.title,panel)
 
     def running(self):

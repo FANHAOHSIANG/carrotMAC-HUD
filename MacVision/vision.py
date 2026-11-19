@@ -14,7 +14,8 @@ KINDS = {"person", "motorcycle", "bicycle", "car", "truck", "bus"}
 def packet_frame(data, wall_now):
     received, = struct.unpack_from("<d", data)
     packet = json.loads(data[8:])
-    frame = packet["cameras"]["road"]
+    cameras = packet["cameras"]
+    frame = cameras.get("road_hd") or cameras["road"]
     age = packet["sent"] - frame.get("capture_time", frame["time"])
     # Both Python processes share Unix time, even with different macOS runtimes.
     receipt_age = wall_now - received
@@ -24,10 +25,11 @@ def packet_frame(data, wall_now):
 
 
 def detect(model, image, cone=False):
-    if cone:
-        import cv2
-        image = cv2.resize(image, (640, 640))
-    result = model.predict(image, device="cpu", verbose=False, imgsz=640, conf=.50)[0]
+    # Fixed-shape cone ONNX uses a square letterbox. Ultralytics maps the
+    # boxes back to the original aspect ratio before exposing xywhn.
+    classes = [6] if cone else [0, 1, 2, 3, 5, 7]
+    result = model.predict(image, device="cpu", verbose=False, imgsz=640,
+                           rect=not cone, classes=classes, conf=.50)[0]
     objects = []
     for box in result.boxes:
         cls = int(box.cls.item())
@@ -96,17 +98,19 @@ def main():
                 if not ok:
                     break
             else:
-                time.sleep(.06)
                 try:
                     item = packet_frame((CACHE / "snapshot.packet").read_bytes(), time.time())
                     if not item:
+                        time.sleep(.025)
                         status = "收到過期影格"
                         continue
                     if item[0] == last_key:
+                        time.sleep(.015)
                         continue
                     last_key, stamp, jpeg = item
                     image = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
                 except (KeyError, ValueError, struct.error, OSError, TypeError) as exc:
+                    time.sleep(.025)
                     status = f"等待 ROAD：{type(exc).__name__} {exc}"
                     continue
                 if image is None:
@@ -114,7 +118,12 @@ def main():
                 if stamp - last_stamp > .65:
                     previous = []
                 last_stamp = stamp
-            objects = smooth(previous, detect(vehicle, image) + detect(cone, image, True))
+            start = time.perf_counter()
+            vehicles = detect(vehicle, image)
+            after_vehicle = time.perf_counter()
+            cones = detect(cone, image, True)
+            after_cone = time.perf_counter()
+            objects = smooth(previous, vehicles + cones)
             previous = objects
             objects = objects + crossing.detect(image)
             if video:
@@ -130,7 +139,10 @@ def main():
                 processed += 1
                 detected += bool(objects)
                 latency = (time.time() - stamp) * 1000
-                status = f"結果延遲 {latency:.0f} ms，物件 " + (", ".join(o[0] for o in objects) or "0")
+                status = (f"ROAD {image.shape[1]}×{image.shape[0]}，結果延遲 {latency:.0f} ms"
+                          f"，車人 {(after_vehicle-start)*1000:.0f} / 錐 {(after_cone-after_vehicle)*1000:.0f}"
+                          f" / 斑馬線與後處理 {(time.perf_counter()-after_cone)*1000:.0f} ms"
+                          "，物件 " + (", ".join(o[0] for o in objects) or "0"))
                 tmp = CACHE / f"vision-{os.getpid()}.tmp"
                 tmp.write_text(json.dumps([stamp,objects]))
                 tmp.replace(CACHE / "vision.json")
