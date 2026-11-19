@@ -146,10 +146,14 @@ def draw_world(renderer, state, shift, ego_y, objects):
             for stripe in range(-2, 3):
                 rl.draw_cube(pos(stripe*.38,0,.04),.22,1.0,.06,rl.RAYWHITE)
         elif kind == "cone":
-            upright(0,.52,.22,.035,rl.ORANGE)
+            rl.draw_cube(pos(0,0,.045),.52,.52,.09,rl.DARKGRAY)
+            upright(.08,.58,.23,.035,rl.ORANGE)
             upright(.25,.34,.135,.105,rl.WHITE)
         elif kind == "person":
-            upright(.08,1.35,.17,.21,rl.LIGHTGRAY)
+            for side in (-1, 1):
+                rl.draw_cylinder_ex(pos(side*.10,0,.79),pos(side*.15,0,.08),.10,.075,8,rl.LIGHTGRAY)
+                rl.draw_cylinder_ex(pos(side*.18,0,1.29),pos(side*.29,0,.89),.075,.065,8,rl.SKYBLUE)
+            upright(.73,1.4,.18,.23,rl.SKYBLUE)
             rl.draw_sphere(pos(0,0,1.53),.16,rl.RAYWHITE)
         elif kind in ("motorcycle","bicycle"):
             for dy in (-.52,.52):
@@ -158,7 +162,15 @@ def draw_world(renderer, state, shift, ego_y, objects):
         elif kind in ("car","bus","truck"):
             large = kind != "car"
             rl.draw_cube(pos(0,0,.64),2 if large else 1.7,5 if large else 3.7,1.1,rl.GRAY)
-            rl.draw_cube(pos(0,0,1.45),1.8 if large else 1.4,4.8 if large else 2.1,1.1 if large else .55,rl.LIGHTGRAY)
+            if kind == "truck":
+                rl.draw_cube(pos(0,.45,1.55),1.96,3.9,1.45,rl.LIGHTGRAY)
+                rl.draw_cube(pos(0,-1.75,1.32),1.88,1.05,.88,rl.SKYBLUE)
+            elif kind == "bus":
+                rl.draw_cube(pos(0,0,1.55),1.92,4.85,1.3,rl.LIGHTGRAY)
+                rl.draw_cube(pos(0,0,1.73),1.94,4.52,.42,rl.DARKBLUE)
+            else:
+                rl.draw_cube(pos(0,0,1.35),1.44,2.10,.52,rl.LIGHTGRAY)
+                rl.draw_cube(pos(0,-1.06,1.36),1.28,.04,.32,rl.DARKBLUE)
         drawn += 1
     if not drawn:
         return 0, "outside ground view"

@@ -5,6 +5,7 @@ dest="$HOME/CarrotMacHUD/carrot/openpilot/selfdrive/carrot/cluster"
 state="$HOME/Library/Application Support/CarrotMacVision"
 mkdir -p "$state"
 if [[ "${1:-}" == "--remove" ]]; then
+  python3 login_agent.py --remove
   python3 install.py "$dest" --remove
   exit
 fi
@@ -26,6 +27,11 @@ if ! echo "$hash  crosswalk.onnx" | shasum -a 256 -c - >/dev/null 2>&1; then
   curl -fL --retry 3 'https://raw.githubusercontent.com/TonyBinheWu/sunnypilot/83b562a5f21596e81f7e2bd50b41aa7b75d2a796/openpilot/selfdrive/carrot/web/vendor/road-detector/crosswalk.onnx' -o crosswalk.download
   echo "$hash  crosswalk.download" | shasum -a 256 -c -
   mv crosswalk.download crosswalk.onnx
+fi
+if [[ "${1:-}" == "--autostart" ]]; then
+  "$py" -c 'from ultralytics import YOLO; YOLO("yolo11n.pt")'
+  "$py" "$src/install.py" "$dest"
+  exec "$py" "$src/login_agent.py"
 fi
 if [[ $# == 0 ]]; then
   "$py" "$src/install.py" "$dest"

@@ -60,7 +60,26 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--video", type=Path, help="Replay locally. Writes annotated MP4 only.")
     parser.add_argument("--output", default="vision-preview.mp4")
+    parser.add_argument("--background", action="store_true", help="Run without a preview window")
     args = parser.parse_args()
+    log = print
+    if args.background:
+        import logging
+        from logging.handlers import RotatingFileHandler
+        logger = logging.getLogger("carrot.vision")
+        logger.setLevel(logging.INFO)
+        logger.addHandler(RotatingFileHandler("worker.log", maxBytes=262144, backupCount=1, encoding="utf-8"))
+        log = logger.info
+    if not args.video:
+        import fcntl
+        CACHE.mkdir(parents=True, exist_ok=True)
+        lock = (CACHE / "vision-worker.lock").open("a")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if args.background:
+                raise SystemExit(75)
+            raise SystemExit("Mac Vision 已在執行。如需預覽，請先關閉登入自動啟動。")
     if args.video and args.video.resolve() == Path(args.output).resolve():
         parser.error("Use a separate output file")
     from crosswalk import Crosswalk
@@ -71,7 +90,7 @@ def main():
     video = cv2.VideoCapture(str(args.video)) if args.video else None
     if video and not video.isOpened():
         raise SystemExit("Cannot open input video")
-    preview = Preview(CACHE) if not video else None
+    preview = Preview(CACHE) if not video and not args.background else None
     fps = 0.
     writer = None
     last_key = None
@@ -81,7 +100,7 @@ def main():
     last_report = time.monotonic()
     processed = detected = 0
     status = "等待 Jetlink 封包"
-    print("Mac Vision 已啟動，等待 ROAD 影像", flush=True)
+    log("Mac Vision 已啟動，等待 ROAD 影像")
     try:
         while True:
             if preview:
@@ -89,7 +108,7 @@ def main():
                 if not preview.running():
                     break
             if not video and time.monotonic() - last_report >= 5:
-                print(f"Mac Vision｜近五秒推論 {processed} 幀，含物件 {detected} 幀｜{status}｜{hud_feedback(CACHE)}", flush=True)
+                log(f"Mac Vision｜近五秒推論 {processed} 幀，含物件 {detected} 幀｜{status}｜{hud_feedback(CACHE)}")
                 fps = processed / (time.monotonic() - last_report)
                 last_report = time.monotonic()
                 processed = detected = 0
@@ -101,7 +120,7 @@ def main():
                 try:
                     item = packet_frame((CACHE / "snapshot.packet").read_bytes(), time.time())
                     if not item:
-                        time.sleep(.025)
+                        time.sleep(.25 if args.background else .025)
                         status = "收到過期影格"
                         continue
                     if item[0] == last_key:
@@ -110,7 +129,7 @@ def main():
                     last_key, stamp, jpeg = item
                     image = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
                 except (KeyError, ValueError, struct.error, OSError, TypeError) as exc:
-                    time.sleep(.025)
+                    time.sleep(.25 if args.background else .025)
                     status = f"等待 ROAD：{type(exc).__name__} {exc}"
                     continue
                 if image is None:
@@ -146,7 +165,8 @@ def main():
                 tmp = CACHE / f"vision-{os.getpid()}.tmp"
                 tmp.write_text(json.dumps([stamp,objects]))
                 tmp.replace(CACHE / "vision.json")
-                preview.show(image, objects, stamp, fps)
+                if preview:
+                    preview.show(image, objects, stamp, fps)
     finally:
         if video:
             video.release()

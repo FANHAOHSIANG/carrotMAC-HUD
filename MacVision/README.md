@@ -1,6 +1,8 @@
 # Mac 外接 HUD 立體物件測試版
 
-停車時退出 Jetlink 與 HUD helper，解壓縮測試分支，開啟 Start-Mac-Vision.command。需要 Python 3.10 或更新、原有 CarrotMacHUD 與網路下載依賴及權重。保持終端機開啟，重新啟動 Jetlink，使用有 3D 車道的模式。道路預覽與相機校正都需要有效。物件出現於原有車道場景。Mac 以 CPU 執行 YOLO11n 和 Safety Cone 模型，首次載入可能較慢。
+Mac 第一次設定時先停止舊版辨識、退出 Jetlink，再雙擊根目錄的 `Start-IONIQ5-HUD.command`。完成後開啟 Jetlink。之後登入同一 macOS 帳號時，Mac Vision 會在背景等待 ROAD 影像。安裝後可移動下載資料夾。最近的解析度、幀率與 HUD 回報記錄在 `~/Library/Application Support/CarrotMacVision/worker.log`。執行根目錄的 `Disable-Mac-Vision-Autostart.command` 可立即停止背景辨識並取消登入啟動。
+
+需要即時預覽視窗時，先停用背景辨識。停車時退出 Jetlink 與 HUD helper，解壓縮測試分支，開啟 Start-Mac-Vision.command。需要 Python 3.10 或更新、原有 CarrotMacHUD 與網路下載依賴及權重。保持終端機開啟，重新啟動 Jetlink，使用有 3D 車道的模式。道路預覽與相機校正都需要有效。物件出現於原有車道場景。Mac 以 CPU 執行 YOLO11n 和 Safety Cone 模型，首次載入可能較慢。
 
 重播：在 Terminal 執行 bash Start-Mac-Vision.command --video /完整路徑/道路影片.mp4 --output /完整路徑/辨識預覽.mp4。輸出是標有辨識結果的影片。即時視窗左側顯示 USB ROAD 影像及辨識框，右側顯示更新率、延遲與 HUD 最近一次成功繪出的 3D 物件數。斑馬線會以 CROSSWALK 和條紋圖示顯示。按 Q 或 Esc，或用 Ctrl-C 停止即時辨識，退出 Jetlink 後執行 bash Start-Mac-Vision.command --remove 可移除 renderer 掛鉤。
 
