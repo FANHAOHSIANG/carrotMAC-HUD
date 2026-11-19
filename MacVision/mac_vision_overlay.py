@@ -241,3 +241,37 @@ def draw_world(renderer, state, shift, ego_y, objects, stamp, native):
     if not drawn:
         return 0, "outside ground view"
     return drawn, "estimated height" if state.road_transform_trans is None else "projected"
+
+
+def draw_native_car(renderer, vehicle, vector):
+    """Silhouette for the existing forward vehicle marker, using its native pose and tint."""
+
+    w, length, height = vehicle.width_m, vehicle.length_m, vehicle.height_m
+    alpha = int(80 + 150 * max(0., min(1., vehicle.confidence)))
+
+    def corner(side, fore, up):
+        return vector(vehicle.center.x + side*w*vehicle.right_x + fore*length*vehicle.forward_x,
+                      vehicle.center.y + side*w*vehicle.right_y + fore*length*vehicle.forward_y,
+                      .035 + up*height)
+
+    def ring(half_width, rear, front, z):
+        return [corner(-half_width, rear, z), corner(half_width, rear, z),
+                corner(half_width, front, z), corner(-half_width, front, z)]
+
+    def surface(points, rgb):
+        renderer._draw_quad(*points, (*rgb[:3], alpha))
+
+    def sides(lower, upper, colors):
+        for i, color in enumerate(colors):
+            j = (i+1) % 4
+            surface((lower[i], lower[j], upper[j], upper[i]), color)
+
+    base = ring(.44, -.46, .45, .09)
+    belt = ring(.50, -.50, .50, .53)
+    sill = ring(.46, -.38, .33, .54)
+    roof = ring(.35, -.18, .15, .96)
+    renderer._draw_vehicle_shadow(vehicle)
+    sides(base, belt, (vehicle.rear_color, vehicle.side_color, vehicle.body_color, vehicle.side_color))
+    surface(belt, vehicle.body_color)
+    sides(sill, roof, ((59, 80, 99), (86, 106, 120), (70, 91, 110), (86, 106, 120)))
+    surface(roof, (209, 218, 225))

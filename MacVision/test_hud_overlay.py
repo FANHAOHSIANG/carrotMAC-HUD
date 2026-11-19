@@ -100,3 +100,18 @@ class VehicleMatchTest(unittest.TestCase):
         self.assertEqual(m.match(1.2, p*2, [(0, 16)]), set())
         self.assertEqual(m.match(1.4, p, [(0, 16), (.3, 16)]), set())
         self.assertEqual(m.match(1.6, p, []), set())
+
+
+class NativeCarTest(unittest.TestCase):
+    def test_body_uses_native_pose_and_color(self):
+        v = NS(width_m=2., length_m=4., height_m=1.5, confidence=.5,
+               center=NS(x=3., y=10.), right_x=0., right_y=-1., forward_x=1., forward_y=0.,
+               rear_color=(255,170,30), side_color=(211,130,20), body_color=(255,195,50))
+        renderer = MagicMock()
+        overlay.draw_native_car(renderer, v, lambda *xyz: xyz)
+        renderer._draw_vehicle_shadow.assert_called_once_with(v)
+        faces = [call.args for call in renderer._draw_quad.call_args_list]
+        self.assertEqual(len(faces), 10)
+        self.assertEqual(faces[0][-1], (*v.rear_color,155))
+        self.assertEqual(faces[4][0], (1.,11.,.035+.53*1.5))
+        self.assertGreater(faces[-1][0][2], faces[4][0][2])

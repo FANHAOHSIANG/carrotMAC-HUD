@@ -23,6 +23,12 @@ ARROWS = "        if not lit and not show_inactive:\n"
 LIMIT = "        if state.speed_limit_kph is not None or state.navi_debug is not None:\n"
 HOOKS = (
     (LOOP, MODEL_LOOP),
+    ('        self._draw_vehicle_box(marker_vehicle)\n',
+     '        if vehicle.source.startswith("modelV2") or vehicle.source == "radarState":\n'
+     '            from mac_vision_overlay import draw_native_car\n'
+     '            draw_native_car(self, vehicle, Vec3)\n'
+     '        else:\n'
+     '            self._draw_vehicle_box(marker_vehicle)\n'),
     ('            self._profile_add("draw_scene.vehicles", profile_stage)\n',
      '            self._profile_add("draw_scene.vehicles", profile_stage)\n'
      '            from mac_vision_overlay import draw as draw_mac_vision\n'
