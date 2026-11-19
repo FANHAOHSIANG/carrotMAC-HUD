@@ -53,6 +53,16 @@ class OverlayTest(unittest.TestCase):
         self.rl.draw_sphere.assert_not_called()
         self.rl.draw_text.assert_called_once()
 
+    def test_shifted_native_vehicle_matches_in_road_coordinates(self):
+        overlay._matches.reset()
+        self.items = [["car", .5, .7, .15, .15]]
+        native = [NS(center=NS(x=-2., y=10.))]
+        for age, expected in ((.35, 1), (.15, 0)):
+            self.write(age)
+            overlay.draw(self.renderer, self.state, 2., 4., native)
+            self.assertEqual(overlay._scene_feedback[1], expected)
+        self.assertIn("matched 1 native", overlay._scene_feedback[2])
+
     def test_height_missing(self):
         self.state.road_transform_trans=None
         self.assertIn("2 | estimated height",self.frame())
@@ -74,3 +84,19 @@ class OverlayTest(unittest.TestCase):
 
     def test_no_hud(self):
         self.assertEqual(hud_feedback(self.path.parent),"HUD: awaiting renderer")
+
+
+class VehicleMatchTest(unittest.TestCase):
+    def test_unique_vehicle_requires_second_capture(self):
+        m = overlay.VehicleMatches()
+        pts = [('car', .2, 18), ('truck', 3.4, 18), ('person', .2, 18)]
+        for stamp, expected in ((8., set()), (8., set()), (8.2, {0}), (9., set())):
+            self.assertEqual(m.match(stamp, pts, [(0, 18.5)]), expected)
+
+    def test_ambiguous_pairs_and_disappearing_targets(self):
+        m = overlay.VehicleMatches()
+        p = [('car', 0, 16)]
+        m.match(1, p, [(0, 16)])
+        self.assertEqual(m.match(1.2, p*2, [(0, 16)]), set())
+        self.assertEqual(m.match(1.4, p, [(0, 16), (.3, 16)]), set())
+        self.assertEqual(m.match(1.6, p, []), set())

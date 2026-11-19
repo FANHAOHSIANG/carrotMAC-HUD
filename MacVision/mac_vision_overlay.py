@@ -38,13 +38,13 @@ def read_objects():
     try:
         stamp, objects = json.loads(RESULT.read_bytes())
         if not 0 <= time.time() - stamp < .9:
-            return [], "result expired"
+            return [], "result expired", None
         valid = [item for item in objects if isinstance(item, list) and len(item) == 5
                  and item[0] in KINDS and all(isinstance(v, (int, float)) and math.isfinite(v)
                                               for v in item[1:])]
-        return valid, "no detections" if not valid else "fresh"
+        return valid, "no detections" if not valid else "fresh", stamp
     except (OSError, ValueError, TypeError):
-        return [], "waiting for result"
+        return [], "waiting for result", None
 
 
 def report_drawn(count, reason):
@@ -89,7 +89,7 @@ def draw_detection_notice(offset_x):
     import pyray as rl
     global _scene_feedback
     if _scene_feedback is None:
-        objects, reason = read_objects()
+        objects, reason, _ = read_objects()
         count = 0
         if objects:
             reason = "2D view"
@@ -110,34 +110,85 @@ def draw_detection_notice(offset_x):
                 x += 31
 
 
-def draw(renderer, state, shift, ego_y):
+class VehicleMatches:
+    """Confirm isolated pairs across distinct ROAD captures in road coordinates."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.stamp = None
+        self.previous = []
+        self.current = []
+
+    def match(self, stamp, points, targets):
+        if stamp != self.stamp:
+            consecutive = self.stamp is not None and 0 < stamp - self.stamp < .55
+            self.previous = self.current if consecutive else []
+            self.stamp = stamp
+        pairs = []
+        for i, (kind, x, y) in enumerate(points):
+            if kind not in ("car", "truck", "bus"):
+                continue
+            for j, (tx, ty) in enumerate(targets):
+                if abs(x-tx) < .85 and abs(y-ty) < min(3.2, 1.5 + .045*y):
+                    pairs.append((i, j))
+        confirmed = set()
+        current = []
+        for i, j in pairs:
+            if any((i == k or j == n) and (i, j) != (k, n) for k, n in pairs):
+                continue
+            kind, x, y = points[i]
+            tx, ty = targets[j]
+            if any(kind == old and abs(tx-px) < .85 and abs(ty-py) < 3.2
+                   for old, px, py in self.previous):
+                confirmed.add(i)
+            current.append((kind, tx, ty))
+        self.current = current
+        return confirmed
+
+
+_matches = VehicleMatches()
+
+
+def draw(renderer, state, shift, ego_y, native=()):
     global _scene_feedback
-    objects, reason = read_objects()
+    objects, reason, stamp = read_objects()
     drawn = 0
+    if not objects:
+        _matches.reset()
     if objects:
         try:
-            drawn, reason = draw_world(renderer, state, shift, ego_y, objects)
+            drawn, reason = draw_world(renderer, state, shift, ego_y, objects, stamp, native)
         except (ValueError, TypeError, AttributeError, IndexError, ZeroDivisionError) as error:
             reason = f"projection: {type(error).__name__}"
     _scene_feedback = (objects, drawn, reason)
 
 
-def draw_world(renderer, state, shift, ego_y, objects):
+def draw_world(renderer, state, shift, ego_y, objects, stamp, native):
     import pyray as rl
     angles = state.camera_calibration_euler
     if angles is None or len(angles) != 3 or not all(map(math.isfinite, angles)):
+        _matches.reset()
         return 0, "no camera calibration"
     p = renderer._camera_overlay_projection(state)
     if p is None or p.wide_camera:
+        _matches.reset()
         return 0, "no ROAD projection"
     drawn = 0
+    points = []
     for kind,u,v,w,h in objects[:32]:
         if not 0 < u < 1:
             continue
         point = location(p, u, v, renderer.camera_overlay_z_offset_m)
         if point is None:
             continue
-        x, y = point[0]-shift, point[1]+ego_y
+        points.append((kind, *point))
+    targets = [(v.center.x + shift, v.center.y - ego_y) for v in native]
+    merged = _matches.match(stamp, points, targets)
+    for i, (kind, right, forward) in enumerate(points):
+        if i in merged:
+            continue
+        x, y = right-shift, forward+ego_y
         def pos(dx,dy,z):
             return rl.Vector3(x+dx,y+dy,z)
         def upright(z1,z2,r1,r2,color):
@@ -153,25 +204,40 @@ def draw_world(renderer, state, shift, ego_y, objects):
             for side in (-1, 1):
                 rl.draw_cylinder_ex(pos(side*.10,0,.79),pos(side*.15,0,.08),.10,.075,8,rl.LIGHTGRAY)
                 rl.draw_cylinder_ex(pos(side*.18,0,1.29),pos(side*.29,0,.89),.075,.065,8,rl.SKYBLUE)
-            upright(.73,1.4,.18,.23,rl.SKYBLUE)
+            upright(.73,1.4,.18,.23,rl.Color(142, 186, 209, 255))
             rl.draw_sphere(pos(0,0,1.53),.16,rl.RAYWHITE)
         elif kind in ("motorcycle","bicycle"):
             for dy in (-.52,.52):
                 rl.draw_cylinder_ex(pos(-.09,dy,.29),pos(.09,dy,.29),.29,.29,12,rl.DARKGRAY)
-            rl.draw_cube(pos(0,0,.64),.36,1.05,.34,rl.SKYBLUE)
+            if kind == "motorcycle":
+                rl.draw_cube(pos(0,0,.63),.44,1.12,.40,rl.LIGHTGRAY)
+                rl.draw_cube(pos(0,-.18,.88),.32,.65,.12,rl.DARKGRAY)
+            else:
+                for a,b in (((0,-.52,.29),(0,-.12,.77)),((0,-.12,.77),(0,.12,.32)),
+                            ((0,.12,.32),(0,-.52,.29)),((0,.12,.32),(0,.43,.81)),
+                            ((0,.43,.81),(0,.52,.29)),((0,-.12,.77),(0,.43,.81))):
+                    rl.draw_cylinder_ex(pos(*a),pos(*b),.035,.035,6,rl.SKYBLUE)
         elif kind in ("car","bus","truck"):
             large = kind != "car"
             rl.draw_cube(pos(0,0,.64),2 if large else 1.7,5 if large else 3.7,1.1,rl.GRAY)
+            for dx in (-1.,1.):
+                for dy in (-1.,1.):
+                    wheel_x = dx*(.96 if large else .84)
+                    wheel_y = dy*(1.65 if large else 1.15)
+                    rl.draw_cylinder_ex(pos(wheel_x-.07,wheel_y,.34),pos(wheel_x+.07,wheel_y,.34),
+                                        .34,.34,10,rl.DARKGRAY)
             if kind == "truck":
                 rl.draw_cube(pos(0,.45,1.55),1.96,3.9,1.45,rl.LIGHTGRAY)
                 rl.draw_cube(pos(0,-1.75,1.32),1.88,1.05,.88,rl.SKYBLUE)
             elif kind == "bus":
                 rl.draw_cube(pos(0,0,1.55),1.92,4.85,1.3,rl.LIGHTGRAY)
-                rl.draw_cube(pos(0,0,1.73),1.94,4.52,.42,rl.DARKBLUE)
+                rl.draw_cube(pos(0,0,1.73),1.94,4.52,.42,rl.Color(61, 81, 100, 255))
             else:
                 rl.draw_cube(pos(0,0,1.35),1.44,2.10,.52,rl.LIGHTGRAY)
-                rl.draw_cube(pos(0,-1.06,1.36),1.28,.04,.32,rl.DARKBLUE)
+                rl.draw_cube(pos(0,-1.06,1.36),1.28,.04,.32,rl.Color(61, 81, 100, 255))
         drawn += 1
+    if merged:
+        return drawn, f"projected | matched {len(merged)} native"
     if not drawn:
         return 0, "outside ground view"
     return drawn, "estimated height" if state.road_transform_trans is None else "projected"

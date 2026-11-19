@@ -26,7 +26,7 @@ HOOKS = (
     ('            self._profile_add("draw_scene.vehicles", profile_stage)\n',
      '            self._profile_add("draw_scene.vehicles", profile_stage)\n'
      '            from mac_vision_overlay import draw as draw_mac_vision\n'
-     '            draw_mac_vision(self, state, scene.scene_shift_x_m, EGO_FORWARD_M)\n'),
+     '            draw_mac_vision(self, state, scene.scene_shift_x_m, EGO_FORWARD_M, scene.vehicles[1:])\n'),
     ('        self._profile_add("hud.git_status", profile_stage)\n',
      '        self._profile_add("hud.git_status", profile_stage)\n'
      '        from mac_vision_overlay import draw_detection_notice\n'
@@ -61,6 +61,9 @@ def install(dest, remove):
         source = renderer.read_text().replace(
             '        from mac_vision_overlay import draw_crosswalk_notice\n'
             '        draw_crosswalk_notice()\n', '')
+        # Normalize the previous release's overlay call for upgrade and removal.
+        source = source.replace("draw_mac_vision(self, state, scene.scene_shift_x_m, EGO_FORWARD_M)",
+                                "draw_mac_vision(self, state, scene.scene_shift_x_m, EGO_FORWARD_M, scene.vehicles[1:])")
         for before, after in HOOKS:
             source = source.replace(after, before)
         renderer.write_text(source)
