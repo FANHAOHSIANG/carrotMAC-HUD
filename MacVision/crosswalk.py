@@ -12,7 +12,9 @@ def best_box(rows, width, height, pad_x, pad_y):
         x0, x1 = max(0, (cx-w/2-pad_x)/width), min(1, (cx+w/2-pad_x)/width)
         y0, y1 = max(0, (cy-h/2-pad_y)/height), min(1, (cy+h/2-pad_y)/height)
         if x1 > x0 and y1 > y0:
-            best = ["crosswalk", (x0+x1)/2, y1, x1-x0, y1-y0]
+            # ONNX coordinates can be NumPy scalars. Emit ordinary JSON numbers.
+            best = ["crosswalk", float((x0+x1)/2), float(y1),
+                    float(x1-x0), float(y1-y0)]
             score = confidence
     return [best] if best else []
 
