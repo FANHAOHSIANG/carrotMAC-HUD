@@ -8,6 +8,9 @@ from pathlib import Path
 RESULT = Path(os.environ.get("CARROT_HUD_DIR", Path.home() / "Library/Caches/io.zoompilot.jetlink/carrot-hud")) / "vision.json"
 
 
+from hud_road_edges import outside_road
+
+
 def location(p, u, v, z_offset=0.0):
     # Invert cluster_renderer._camera_overlay_screen_xy on the ground plane.
     a = (u - .5) * p.camera_width / p.focal_length
@@ -127,12 +130,12 @@ class VehicleMatches:
             self.stamp = stamp
         pairs = []
         for i, (kind, x, y) in enumerate(points):
-            if kind not in ("car", "truck", "bus"):
+            if kind not in ("car", "truck", "bus", "motorcycle"):
                 continue
             for j, (tx, ty) in enumerate(targets):
                 if abs(x-tx) < .85 and abs(y-ty) < min(3.2, 1.5 + .045*y):
                     pairs.append((i, j))
-        confirmed = set()
+        confirmed = {}
         current = []
         for i, j in pairs:
             if any((i == k or j == n) and (i, j) != (k, n) for k, n in pairs):
@@ -141,7 +144,7 @@ class VehicleMatches:
             tx, ty = targets[j]
             if any(kind == old and abs(tx-px) < .85 and abs(ty-py) < 3.2
                    for old, px, py in self.previous):
-                confirmed.add(i)
+                confirmed[i] = j
             current.append((kind, tx, ty))
         self.current = current
         return confirmed
@@ -154,17 +157,19 @@ def draw(renderer, state, shift, ego_y, native=()):
     global _scene_feedback
     objects, reason, stamp = read_objects()
     drawn = 0
+    drawn_bikes = set()
     if not objects:
         _matches.reset()
     if objects:
         try:
-            drawn, reason = draw_world(renderer, state, shift, ego_y, objects, stamp, native)
+            drawn, reason = draw_world(renderer, state, shift, ego_y, objects, stamp, native, drawn_bikes)
         except (ValueError, TypeError, AttributeError, IndexError, ZeroDivisionError) as error:
             reason = f"projection: {type(error).__name__}"
     _scene_feedback = (objects, drawn, reason)
+    return drawn_bikes
 
 
-def draw_world(renderer, state, shift, ego_y, objects, stamp, native):
+def draw_world(renderer, state, shift, ego_y, objects, stamp, native, drawn_bikes):
     import pyray as rl
     angles = state.camera_calibration_euler
     if angles is None or len(angles) != 3 or not all(map(math.isfinite, angles)):
@@ -182,12 +187,22 @@ def draw_world(renderer, state, shift, ego_y, objects, stamp, native):
         point = location(p, u, v, renderer.camera_overlay_z_offset_m)
         if point is None:
             continue
+        if outside_road(state, *point):
+            continue
         points.append((kind, *point))
     targets = [(v.center.x + shift, v.center.y - ego_y) for v in native]
     merged = _matches.match(stamp, points, targets)
     for i, (kind, right, forward) in enumerate(points):
         if i in merged:
-            continue
+            if kind != "motorcycle":
+                continue
+            index = merged[i]
+            vehicle = native[index]
+            if vehicle.source.startswith("modelV2") or vehicle.source == "radarState":
+                draw_native_bike(rl, vehicle)
+                drawn_bikes.add(index)
+                drawn += 1
+                continue
         x, y = right-shift, forward+ego_y
         def pos(dx,dy,z):
             return rl.Vector3(x+dx,y+dy,z)
@@ -237,10 +252,24 @@ def draw_world(renderer, state, shift, ego_y, objects, stamp, native):
                 rl.draw_cube(pos(0,-1.06,1.36),1.28,.04,.32,rl.Color(61, 81, 100, 255))
         drawn += 1
     if merged:
-        return drawn, f"projected | matched {len(merged)} native"
+        return drawn, f"projected | matched {len(merged)} native | bikes {len(drawn_bikes)}"
     if not drawn:
         return 0, "outside ground view"
     return drawn, "estimated height" if state.road_transform_trans is None else "projected"
+
+
+def draw_native_bike(rl, vehicle):
+    def pos(side, fore, z):
+        return rl.Vector3(vehicle.center.x + side*vehicle.right_x + fore*vehicle.forward_x,
+                          vehicle.center.y + side*vehicle.right_y + fore*vehicle.forward_y, z)
+
+    alpha = int(80 + 150 * max(0., min(1., vehicle.confidence)))
+    for fore in (-.59, .59):
+        rl.draw_cylinder_ex(pos(-.085, fore, .29), pos(.085, fore, .29), .29, .29, 10, rl.DARKGRAY)
+    rl.draw_cylinder_ex(pos(0, -.38, .60), pos(0, .37, .74), .20, .25, 8,
+                        rl.Color(*vehicle.body_color[:3], alpha))
+    rl.draw_cylinder_ex(pos(0, -.39, .65), pos(0, -.39, .81), .18, .14, 8,
+                        rl.Color(*vehicle.rear_color[:3], alpha))
 
 
 def draw_native_car(renderer, vehicle, vector):

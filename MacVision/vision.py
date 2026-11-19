@@ -24,12 +24,68 @@ def packet_frame(data, wall_now):
     return (frame["frame"], frame["time"]), received - age, base64.b64decode(frame["jpeg"], validate=True)
 
 
-def detect(model, image, cone=False):
+def box_iou(a, b):
+    """Intersection over union for normalized bottom-center boxes."""
+    _, x, y, w, h = a
+    _, u, v, bw, bh = b
+    iw = max(0., min(x+w/2, u+bw/2) - max(x-w/2, u-bw/2))
+    ih = max(0., min(y, v) - max(y-h, v-bh))
+    overlap = iw * ih
+    union = w*h + bw*bh - overlap
+    return overlap / union if union > 0 else 0.
+
+
+def riding(person, bike):
+    _, x, foot, w, h = person
+    _, cx, bottom, bw, bh = bike
+    return (abs(x-cx) <= .26*bw and w <= 1.15*bw and
+            bottom-1.05*bh <= foot <= bottom-.06*bh and
+            foot-h < bottom-.8*bh)
+
+
+class RoadDetections:
+    """Use current motorcycle evidence and the immediately preceding ROAD frame."""
+    def __init__(self):
+        self.stamp = None
+        self.bikes = []
+
+    def resolve(self, scored, stamp):
+        recent = self.bikes if self.stamp is not None and 0 < stamp-self.stamp < .55 else []
+        bikes = []
+        for box, score in scored:
+            if box[0] != "motorcycle":
+                continue
+            corroborated = any(box_iou(box, previous) >= .42 for previous in recent)
+            if score >= .50 or corroborated:
+                bikes.append((box, score, corroborated))
+        # Weak isolated detections can establish a match on the next capture.
+        self.bikes = [box for box, score in scored if box[0] == "motorcycle" and score >= .35]
+        self.stamp = stamp
+        riders = [box for box, score in scored if box[0] == "person" and score >= .50]
+        output = []
+        for box, score in scored:
+            kind = box[0]
+            if kind == "motorcycle":
+                if any(box is bike for bike, _, _ in bikes):
+                    output.append(box)
+            elif score >= .50:
+                if kind == "person":
+                    matches = [bike for bike, _, _ in bikes if riding(box, bike)]
+                    if len(matches) == 1 and sum(riding(p, matches[0]) for p in riders) == 1:
+                        continue
+                if kind == "car" and any(stable and strength >= score and box_iou(box, bike) >= .75
+                                         for bike, strength, stable in bikes):
+                    continue
+                output.append(box)
+        return output
+
+
+def detect(model, image, cone=False, road=None, stamp=None):
     # Fixed-shape cone ONNX uses a square letterbox. Ultralytics maps the
     # boxes back to the original aspect ratio before exposing xywhn.
     classes = [6] if cone else [0, 1, 2, 3, 5, 7]
     result = model.predict(image, device="cpu", verbose=False, imgsz=640,
-                           rect=not cone, classes=classes, conf=.50)[0]
+                           rect=not cone, classes=classes, conf=.35 if road is not None else .50)[0]
     objects = []
     for box in result.boxes:
         cls = int(box.cls.item())
@@ -37,8 +93,9 @@ def detect(model, image, cone=False):
         if (cone and cls != 6) or (not cone and kind not in KINDS):
             continue
         x, y, w, h = box.xywhn[0].tolist()
-        objects.append([kind, x, y + h / 2, w, h])
-    return objects
+        obj = [kind, x, y + h / 2, w, h]
+        objects.append((obj, float(box.conf.item())) if road is not None else obj)
+    return road.resolve(objects, stamp) if road is not None else objects
 
 
 def smooth(previous, objects):
@@ -85,6 +142,7 @@ def main():
     from crosswalk import Crosswalk
     from preview import Preview, hud_feedback
     crossing = Crosswalk()
+    road = RoadDetections()
     vehicle = YOLO("yolo11n.pt")
     cone = YOLO("cone.onnx", task="detect")
     video = cv2.VideoCapture(str(args.video)) if args.video else None
@@ -116,6 +174,7 @@ def main():
                 ok, image = video.read()
                 if not ok:
                     break
+                stamp = video.get(cv2.CAP_PROP_POS_FRAMES) / (video.get(cv2.CAP_PROP_FPS) or 20.)
             else:
                 try:
                     item = packet_frame((CACHE / "snapshot.packet").read_bytes(), time.time())
@@ -138,7 +197,7 @@ def main():
                     previous = []
                 last_stamp = stamp
             start = time.perf_counter()
-            vehicles = detect(vehicle, image)
+            vehicles = detect(vehicle, image, road=road, stamp=stamp)
             after_vehicle = time.perf_counter()
             cones = detect(cone, image, True)
             after_cone = time.perf_counter()

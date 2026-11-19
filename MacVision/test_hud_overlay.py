@@ -63,6 +63,19 @@ class OverlayTest(unittest.TestCase):
             self.assertEqual(overlay._scene_feedback[1], expected)
         self.assertIn("matched 1 native", overlay._scene_feedback[2])
 
+    def test_confirmed_motorcycle_replaces_only_its_native_marker(self):
+        overlay._matches.reset()
+        self.items = [["motorcycle", .5, .7, .14, .17]]
+        v = NS(center=NS(x=-2., y=10.), source="radarState", confidence=.8,
+               right_x=1., right_y=0., forward_x=0., forward_y=1.,
+               body_color=(245,180,35), rear_color=(240,155,30))
+        neighbor = NS(center=NS(x=1.4, y=10.))
+        for age, expected in ((.34, set()), (.34, set()), (.14, {1}), (1., set())):
+            self.write(age)
+            self.assertEqual(overlay.draw(self.renderer, self.state, 2., 4., [neighbor, v]), expected)
+        self.rl.Color.assert_any_call(245,180,35,200)
+        self.rl.Vector3.assert_any_call(-2., 9.61, .81)
+
     def test_height_missing(self):
         self.state.road_transform_trans=None
         self.assertIn("2 | estimated height",self.frame())
@@ -90,16 +103,16 @@ class VehicleMatchTest(unittest.TestCase):
     def test_unique_vehicle_requires_second_capture(self):
         m = overlay.VehicleMatches()
         pts = [('car', .2, 18), ('truck', 3.4, 18), ('person', .2, 18)]
-        for stamp, expected in ((8., set()), (8., set()), (8.2, {0}), (9., set())):
+        for stamp, expected in ((8., {}), (8., {}), (8.2, {0:0}), (9., {})):
             self.assertEqual(m.match(stamp, pts, [(0, 18.5)]), expected)
 
     def test_ambiguous_pairs_and_disappearing_targets(self):
         m = overlay.VehicleMatches()
         p = [('car', 0, 16)]
         m.match(1, p, [(0, 16)])
-        self.assertEqual(m.match(1.2, p*2, [(0, 16)]), set())
-        self.assertEqual(m.match(1.4, p, [(0, 16), (.3, 16)]), set())
-        self.assertEqual(m.match(1.6, p, []), set())
+        self.assertEqual(m.match(1.2, p*2, [(0, 16)]), {})
+        self.assertEqual(m.match(1.4, p, [(0, 16), (.3, 16)]), {})
+        self.assertEqual(m.match(1.6, p, []), {})
 
 
 class NativeCarTest(unittest.TestCase):

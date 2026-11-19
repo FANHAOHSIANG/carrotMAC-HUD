@@ -13,6 +13,7 @@ ALLOY = (159, 172, 184)
 
 # Scale the visual mesh only. Lane and vehicle tracking use the original box.
 # Width, length and height scale independently to keep the road in view.
+EGO_MESH_SCALE = .92
 SCALES = {"factory": (1.15, 1.04, 1.10), "night": (1.20, 1.05, 1.13),
           "large": (1.27, 1.06, 1.18)}
 PAINT = {"factory": (200, 211, 218), "night": (89, 118, 132), "large": (221, 225, 212)}
@@ -145,6 +146,7 @@ def draw_mesh(vehicle, faces, lens_offset=0.0):
         rl.rl_rotatef(math.degrees(math.atan2(-vehicle.forward_x, vehicle.forward_y)), 0, 0, 1)
         w, length, h = SCALES[STYLE]
         rl.rl_scalef(vehicle.width_m*w, vehicle.length_m*length, vehicle.height_m*h)
+        rl.rl_scalef(EGO_MESH_SCALE, EGO_MESH_SCALE, EGO_MESH_SCALE)
         if lens_offset:
             rl.rl_translatef(0, lens_offset, 0)
         rl.rl_disable_backface_culling()
