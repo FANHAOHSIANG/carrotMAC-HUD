@@ -1,58 +1,96 @@
+"""Install or remove Mac Vision and the Mac-only HUD appearance controls."""
 from pathlib import Path
-import subprocess
 import shutil
+import subprocess
 import sys
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 
-dest = Path(sys.argv[1])
-path = dest / "cluster_renderer.py"
-src = path.read_text()
-anchor = '            self._profile_add("draw_scene.vehicles", profile_stage)\n'
-hook = ("            from mac_vision_overlay import draw as draw_mac_vision\n"
-        "            draw_mac_vision(self, state, scene.scene_shift_x_m, EGO_FORWARD_M)\n")
-footer = '        self._profile_add("hud.git_status", profile_stage)\n'
-notice = ("        from mac_vision_overlay import draw_crosswalk_notice\n"
-          "        draw_crosswalk_notice()\n")
-vehicle_loop = "            for vehicle in scene.vehicles:\n"
-ioniq_loop = """            if scene.vehicles:
+SRC = Path(__file__).resolve().parent
+REL = Path("openpilot/selfdrive/carrot/cluster")
+FILES = ("cluster_models.py", "cluster_live.py", "cluster_renderer.py")
+MODULES = ("hud_style.py", "ioniq5_model.py", "mac_vision_overlay.py")
+LOOP = "            for vehicle in scene.vehicles:\n"
+MODEL_LOOP = """            if scene.vehicles:
                 from ioniq5_model import draw as draw_ioniq5
                 self._draw_vehicle_shadow(scene.vehicles[0])
                 draw_ioniq5(scene.vehicles[0])
             for vehicle in scene.vehicles[1:]:
 """
-if src.count(vehicle_loop) + src.count(ioniq_loop) != 1:
-    sys.exit("Unsupported ego vehicle layout. No files changed.")
-if src.count(anchor) != 1 or src.count(footer) != 1:
-    sys.exit("Unsupported renderer layout. No files changed.")
-remove = "--remove" in sys.argv
-# Apply the lamp layer separately so existing Vision installations can upgrade.
-patch = Path(__file__).with_name("ego-lamps.patch").resolve()
-git_apply = ["git", "-C", str(dest.resolve().parents[3]), "apply"]
-direction = ["--reverse"] if remove else []
-opposite = [] if remove else ["--reverse"]
-with TemporaryDirectory() as temporary:
-    # P/R display inserts gear_valid immediately after onroad in cluster_live.
-    live = (dest / "cluster_live.py").read_text()
-    if "            gear_valid=gear_valid,\n" in live:
-        body = patch.read_text().replace(
-            "             alert=self._live_cluster_alert(state.alert, onroad),\n",
-            "             gear_valid=gear_valid,\n", 1,
-        )
-        patch = Path(temporary) / patch.name
-        patch.write_text(body)
-    if subprocess.run([*git_apply, *opposite, "--check", str(patch)], capture_output=True).returncode:
-        subprocess.run([*git_apply, *direction, str(patch)], check=True)
-        src = path.read_text()
-updated = src.replace(anchor+hook, anchor).replace(footer+notice, footer)
-updated = updated.replace(ioniq_loop, vehicle_loop)
-if not remove:
-    shutil.copyfile(Path(__file__).with_name("ioniq5_model.py"), dest / "ioniq5_model.py")
-    updated = updated.replace(vehicle_loop, ioniq_loop)
-    shutil.copyfile(Path(__file__).with_name("mac_vision_overlay.py"), dest / "mac_vision_overlay.py")
-    updated = updated.replace(anchor, anchor+hook).replace(footer, footer+notice)
-if updated != src:
-    compile(updated, str(path), "exec")
-    tmp = path.with_suffix(".vision.tmp")
-    tmp.write_text(updated)
-    shutil.copymode(path,tmp)
-    tmp.replace(path)
+OLD_LAMPS = "                    self._draw_ego_lamps(scene.vehicles[0], brake, left, right)"
+NEW_LAMPS = """                    from ioniq5_model import draw_lamps
+                    draw_lamps(scene.vehicles[0], brake, left, right)"""
+ARROWS = "        if not lit and not show_inactive:\n"
+LIMIT = "        if state.speed_limit_kph is not None or state.navi_debug is not None:\n"
+HOOKS = (
+    (LOOP, MODEL_LOOP),
+    ('            self._profile_add("draw_scene.vehicles", profile_stage)\n',
+     '            self._profile_add("draw_scene.vehicles", profile_stage)\n'
+     '            from mac_vision_overlay import draw as draw_mac_vision\n'
+     '            draw_mac_vision(self, state, scene.scene_shift_x_m, EGO_FORWARD_M)\n'),
+    ('        self._profile_add("hud.git_status", profile_stage)\n',
+     '        self._profile_add("hud.git_status", profile_stage)\n'
+     '        from mac_vision_overlay import draw_crosswalk_notice\n'
+     '        draw_crosswalk_notice()\n'),
+    (ARROWS, '        from hud_style import SHOW_ARROWS\n'
+     '        if not SHOW_ARROWS:\n            return\n' + ARROWS),
+    (LIMIT, '        from hud_style import SHOW_LIMIT\n'
+     '        if SHOW_LIMIT and (state.speed_limit_kph is not None or state.navi_debug is not None):\n'),
+    (OLD_LAMPS, NEW_LAMPS),
+)
+
+
+def write_file(path, data):
+    if path.exists() and path.read_bytes() == data:
+        return
+    with NamedTemporaryFile(dir=path.parent, delete=False) as temp:
+        temp.write(data)
+    new = Path(temp.name)
+    if path.exists():
+        shutil.copymode(path, new)
+    new.replace(path)
+
+
+def install(dest, remove):
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        stage = root / REL
+        stage.mkdir(parents=True)
+        for name in FILES:
+            shutil.copyfile(dest / name, stage / name)
+        renderer = stage / "cluster_renderer.py"
+        source = renderer.read_text()
+        for before, after in HOOKS:
+            source = source.replace(after, before)
+        renderer.write_text(source)
+        patch = (SRC / "ego-lamps.patch").read_text()
+        if "            gear_valid=gear_valid,\n" in (stage / "cluster_live.py").read_text():
+            patch = patch.replace('             alert=self._live_cluster_alert(state.alert, onroad),\n',
+                                  '             gear_valid=gear_valid,\n', 1)
+        patch_path = root / "lamps.patch"
+        patch_path.write_text(patch)
+        cmd = ["git", "apply"]
+        opposite = [] if remove else ["--reverse"]
+        if subprocess.run(cmd + opposite + ["--check", str(patch_path)], cwd=root,
+                          capture_output=True).returncode:
+            direction = ["--reverse"] if remove else []
+            subprocess.run(cmd + direction + [str(patch_path)], cwd=root, check=True)
+        source = renderer.read_text()
+        writes = {}
+        if not remove:
+            for before, after in HOOKS:
+                if source.count(before) != 1:
+                    raise ValueError("HUD 版本不符，找不到唯一的繪圖位置：" + before.strip())
+                source = source.replace(before, after)
+            for name in MODULES:
+                writes[name] = (SRC / name).read_bytes()
+        renderer.write_text(source)
+        for name in FILES:
+            writes[name] = (stage / name).read_bytes()
+        for name, data in writes.items():
+            compile(data, name, "exec")
+        for name, data in writes.items():
+            write_file(dest / name, data)
+
+
+if __name__ == "__main__":
+    install(Path(sys.argv[1]), "--remove" in sys.argv[2:])

@@ -1,6 +1,8 @@
 """Low-poly first-generation IONIQ 5. Coordinates are fractions of the HUD ego box."""
 import math
 
+from hud_style import STYLE
+
 SILVER = (188, 197, 204)
 SHADE = (126, 139, 151)
 GLASS = (45, 60, 76)
@@ -9,12 +11,46 @@ TIRE = (28, 30, 34)
 ALLOY = (159, 172, 184)
 
 
-def geometry():
+# Scale the visual mesh only. Lane and vehicle tracking use the original box.
+# Width, length and height scale independently to keep the road in view.
+SCALES = {"factory": (1.15, 1.04, 1.10), "night": (1.20, 1.05, 1.13),
+          "large": (1.27, 1.06, 1.18)}
+PAINT = {"factory": (200, 211, 218), "night": (89, 118, 132), "large": (221, 225, 212)}
+
+
+def lamp_geometry(style, brake, left, right):
+    faces = []
+    def rect(x, z, w, h, rgb, y=-.535):
+        faces.append((rgb, ((x-w/2,y,z-h/2),(x+w/2,y,z-h/2),
+                            (x+w/2,y,z+h/2),(x-w/2,y,z+h/2))))
+
+    # Black hatch insert and a separate high-mounted brake strip in the spoiler.
+    rect(0,.52,.93,.285,TRIM,-.530)
+    # Four silver pixels identify the hatch even when the lamps are off.
+    for x in (-.063, -.021, .021, .063):
+        rect(x,.515,.024,.029,(170,182,191))
+    rect(0,.922,.42,.045,(255,56,52) if brake else (53,36,40),-.397)
+    n = {"factory": 4, "night": 3, "large": 2}[style]
+    width = {"factory": .275, "night": .325, "large": .355}[style]
+    for sign, turning in ((-1,left),(1,right)):
+        for i in range(n):
+            x = sign*(.45 - (i+.5)*width/n)
+            rect(x,.545,.87*width/n,.137 if style == "large" else .105,
+                 (255,42,45) if brake else (100,38,45))
+            rect(x,.416,.85*width/n,.085 if style == "large" else .063,
+                 (255,186,35) if turning else (68,53,40))
+            if brake:
+                rect(x,.56,.62*width/n,.027,(255,149,125),-.538)
+    return tuple(faces)
+
+
+def geometry(style):
     faces = []
 
     def face(color, *points):
         faces.append((color, points))
 
+    body = PAINT[style]
     # Horizontal octagons give the hatch and bumpers their chamfered corners.
     def ring(width, rear, nose, z):
         cut = .045
@@ -31,11 +67,11 @@ def geometry():
     shell(ring(.45,-.475,.48,.18), ring(.49,-.50,.50,.36),
           [SHADE]*8, SHADE)
     shell(ring(.49,-.50,.50,.36), ring(.48,-.485,.475,.58),
-          [SILVER,SHADE,SILVER,SHADE,SILVER,SHADE,SHADE,SHADE], SILVER)
+          [body,SHADE,body,SHADE,body,SHADE,SHADE,SHADE], body)
     shell(ring(.445,-.45,.32,.585), ring(.365,-.33,.14,.935),
-          [GLASS,(57,70,83),GLASS,GLASS,(68,88,104),GLASS,GLASS,GLASS], SILVER)
+          [GLASS,(57,70,83),GLASS,GLASS,(68,88,104),GLASS,GLASS,GLASS], body)
     shell(ring(.372,-.36,.15,.927), ring(.365,-.36,.15,.958),
-          [TRIM]*8, SILVER)
+          [TRIM]*8, body)
 
     # Tailgate light bar, unlit pixels and the front twin pixel clusters.
     face(TRIM, (-.445,-.501,.455),(.445,-.501,.455),(.445,-.501,.607),(-.445,-.501,.607))
@@ -69,24 +105,53 @@ def geometry():
                     return (side*.506, axle+.083*radius*math.cos(angle),
                             .235+.223*radius*math.sin(angle))
                 face(TRIM,hub_point(a,.17),hub_point(a+.15,.53),hub_point(a+.75,.53))
+    # Projecting roof spoiler, rear wiper recess, bumper lip and pixel reflectors.
+    shell(ring(.38,-.39,-.32,.921), ring(.393,-.385,-.31,.962),
+          [TRIM]*8, body)
+    face(SHADE,(-.44,-.513,.30),(.44,-.513,.30),(.42,-.512,.345),(-.42,-.512,.345))
+    # Bright bevels on the lower valance and diagonal creases in the D-pillars.
+    for sign in (-1, 1):
+        face((161,176,185),(sign*.438,-.512,.31),(sign*.30,-.512,.21),
+             (sign*.22,-.512,.21),(sign*.405,-.512,.31))
+        face((106,124,137),(sign*.432,-.454,.60),(sign*.394,-.435,.65),
+             (sign*.34,-.345,.895),(sign*.362,-.347,.903))
+    for sign in (-1,1):
+        face((147,49,55),(sign*.32,-.515,.27),(sign*.435,-.515,.27),
+             (sign*.435,-.515,.303),(sign*.32,-.515,.303))
     return tuple(faces)
 
 
-FACES = geometry()
+FACES = geometry(STYLE)
+LAMP_FACES = {(b,l,r): lamp_geometry(STYLE,b,l,r) for b in (False,True)
+              for l in (False,True) for r in (False,True)}
 
+
+REST_FACES = FACES + LAMP_FACES[False,False,False]
 
 def draw(vehicle):
+    draw_mesh(vehicle, REST_FACES)
+
+
+def draw_lamps(vehicle, brake, left, right):
+    # Only lit lenses need an overlay. Draw them just aft of the unlit insert.
+    draw_mesh(vehicle, LAMP_FACES[brake,left,right], -.0015)
+
+
+def draw_mesh(vehicle, faces, lens_offset=0.0):
     import pyray as rl
     rl.rl_push_matrix()
     try:
         rl.rl_translatef(vehicle.center.x, vehicle.center.y, vehicle.center.z - vehicle.height_m*.5)
         rl.rl_rotatef(math.degrees(math.atan2(-vehicle.forward_x, vehicle.forward_y)), 0, 0, 1)
-        rl.rl_scalef(vehicle.width_m, vehicle.length_m, vehicle.height_m)
+        w, length, h = SCALES[STYLE]
+        rl.rl_scalef(vehicle.width_m*w, vehicle.length_m*length, vehicle.height_m*h)
+        if lens_offset:
+            rl.rl_translatef(0, lens_offset, 0)
         rl.rl_disable_backface_culling()
         try:
             rl.rl_begin(0x0004)  # rlgl RL_TRIANGLES
             try:
-                for rgb, points in FACES:
+                for rgb, points in faces:
                     rl.rl_color4ub(*rgb,255)
                     for i in range(1,len(points)-1):
                         for vertex in (points[0], points[i], points[i+1]):
