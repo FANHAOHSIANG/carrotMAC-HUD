@@ -3,6 +3,16 @@ import json
 import time
 
 
+def hud_feedback(cache):
+    try:
+        stamp, count, reason = json.loads((cache/"vision-drawn.json").read_bytes())
+        if 0 <= time.time() - stamp < 2:
+            return f"HUD 3D: {count} | {reason}"
+    except (OSError, ValueError, TypeError):
+        pass
+    return "HUD: awaiting renderer"
+
+
 class Preview:
     def __init__(self, cache):
         import cv2
@@ -33,14 +43,9 @@ class Preview:
         label("USB ROAD / Mac inference",530,36)
         label(f"{fps:.1f} fps",530,75)
         if stamp is not None:
-            label(f"Capture to result: {(now-stamp)*1000:.0f} ms",530,105)
+            label(f"Capture to result: {(time.time()-stamp)*1000:.0f} ms",530,105)
             label(f"Detected: {len(objects)}",530,137)
-        try:
-            ack, count = json.loads((self.cache/"vision-drawn.json").read_bytes())
-            fresh = 0 <= now-ack < 1
-        except (OSError, ValueError, TypeError):
-            fresh, count = False, 0
-        label(f"HUD 3D drawn: {count}" if fresh else "HUD 3D: awaiting renderer",530,178)
+        label(hud_feedback(self.cache),530,178)
         cv2.imshow(self.title,panel)
 
     def running(self):

@@ -29,8 +29,8 @@ HOOKS = (
      '            draw_mac_vision(self, state, scene.scene_shift_x_m, EGO_FORWARD_M)\n'),
     ('        self._profile_add("hud.git_status", profile_stage)\n',
      '        self._profile_add("hud.git_status", profile_stage)\n'
-     '        from mac_vision_overlay import draw_crosswalk_notice\n'
-     '        draw_crosswalk_notice()\n'),
+     '        from mac_vision_overlay import draw_detection_notice\n'
+     '        draw_detection_notice(offset_x)\n'),
     (ARROWS, '        from hud_style import SHOW_ARROWS\n'
      '        if not SHOW_ARROWS:\n            return\n' + ARROWS),
     (LIMIT, '        from hud_style import SHOW_LIMIT\n'
@@ -58,7 +58,9 @@ def install(dest, remove):
         for name in FILES:
             shutil.copyfile(dest / name, stage / name)
         renderer = stage / "cluster_renderer.py"
-        source = renderer.read_text()
+        source = renderer.read_text().replace(
+            '        from mac_vision_overlay import draw_crosswalk_notice\n'
+            '        draw_crosswalk_notice()\n', '')
         for before, after in HOOKS:
             source = source.replace(after, before)
         renderer.write_text(source)

@@ -1,0 +1,76 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace as NS
+from unittest.mock import MagicMock, patch
+
+import mac_vision_overlay as overlay
+from preview import hud_feedback
+
+
+class OverlayTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "vision.json"
+        self.epoch = 1794999000.
+        self.rl = MagicMock()
+        for target, value in ((overlay, {"RESULT": self.path, "_last_report": 0., "_scene_feedback": None}),
+                              (overlay.time, {"time": lambda: self.epoch, "monotonic": lambda: 75.})):
+            ctx = patch.multiple(target, **value)
+            ctx.start()
+            self.addCleanup(ctx.stop)
+        ctx = patch.dict("sys.modules", pyray=self.rl)
+        ctx.start()
+        self.addCleanup(ctx.stop)
+        self.proj = NS(view_from_road=((0,-1,0),(0,0,-1),(1,0,0)), camera_height_m=1.3,
+                       focal_length=500, camera_width=1000, camera_height=500, wide_camera=False)
+        self.renderer = NS(_camera_overlay_projection=lambda state: self.proj, camera_overlay_z_offset_m=.1)
+        self.state = NS(camera_calibration_euler=(0.,0.,0.), road_transform_trans=(0,0,1.3))
+        self.items = [["person", .6, .7, .04, .12], ["crosswalk", .5,.7,.3,.08]]
+        self.write(.25)
+
+    def write(self, age):
+        self.path.write_text(json.dumps([self.epoch-age, self.items]))
+
+    def frame(self):
+        overlay.draw(self.renderer, self.state, 0., 4.)
+        overlay.draw_detection_notice(0)
+        self.assertIsNone(overlay._scene_feedback)
+        return hud_feedback(self.path.parent)
+
+    def test_live_mixed_frame(self):
+        self.assertAlmostEqual(overlay.location(self.proj,.6,.7,.1)[1],6.)
+        self.assertEqual(self.frame(), "HUD 3D: 2 | projected")
+        self.rl.draw_sphere.assert_called_once()
+        self.assertEqual(self.rl.draw_cube.call_count, 5)
+        self.rl.draw_text.assert_called_once()
+
+    def test_calibration_missing(self):
+        self.state.camera_calibration_euler=None
+        self.assertIn("no camera calibration",self.frame())
+        self.rl.draw_sphere.assert_not_called()
+        self.rl.draw_text.assert_called_once()
+
+    def test_height_missing(self):
+        self.state.road_transform_trans=None
+        self.assertIn("2 | estimated height",self.frame())
+
+    def test_stale(self):
+        self.write(1.)
+        self.assertIn("0 | result expired",self.frame())
+        self.rl.draw_text.assert_not_called()
+        self.rl.draw_sphere.assert_not_called()
+
+    def test_future_clock(self):
+        self.write(-2.)
+        self.assertIn("0 | result expired",self.frame())
+
+    def test_other_view(self):
+        overlay.draw_detection_notice(1200)
+        self.assertIn("0 | 2D view",hud_feedback(self.path.parent))
+        self.rl.draw_text.assert_called_once()
+
+    def test_no_hud(self):
+        self.assertEqual(hud_feedback(self.path.parent),"HUD: awaiting renderer")

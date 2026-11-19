@@ -11,16 +11,16 @@ CACHE = Path(os.environ.get("CARROT_HUD_DIR", Path.home() / "Library/Caches/io.z
 KINDS = {"person", "motorcycle", "bicycle", "car", "truck", "bus"}
 
 
-def packet_frame(data, now, wall_now):
+def packet_frame(data, wall_now):
     received, = struct.unpack_from("<d", data)
     packet = json.loads(data[8:])
     frame = packet["cameras"]["road"]
     age = packet["sent"] - frame.get("capture_time", frame["time"])
-    # Swift writes receipt time as Unix epoch. HUD expiry uses local monotonic time.
+    # Both Python processes share Unix time, even with different macOS runtimes.
     receipt_age = wall_now - received
     if not (0 <= receipt_age < .5 and 0 <= age < .4):
         return None
-    return (frame["frame"], frame["time"]), now - receipt_age - age, base64.b64decode(frame["jpeg"], validate=True)
+    return (frame["frame"], frame["time"]), received - age, base64.b64decode(frame["jpeg"], validate=True)
 
 
 def detect(model, image, cone=False):
@@ -62,7 +62,7 @@ def main():
     if args.video and args.video.resolve() == Path(args.output).resolve():
         parser.error("Use a separate output file")
     from crosswalk import Crosswalk
-    from preview import Preview
+    from preview import Preview, hud_feedback
     crossing = Crosswalk()
     vehicle = YOLO("yolo11n.pt")
     cone = YOLO("cone.onnx", task="detect")
@@ -87,7 +87,7 @@ def main():
                 if not preview.running():
                     break
             if not video and time.monotonic() - last_report >= 5:
-                print(f"Mac Vision｜近五秒推論 {processed} 幀，含物件 {detected} 幀｜{status}", flush=True)
+                print(f"Mac Vision｜近五秒推論 {processed} 幀，含物件 {detected} 幀｜{status}｜{hud_feedback(CACHE)}", flush=True)
                 fps = processed / (time.monotonic() - last_report)
                 last_report = time.monotonic()
                 processed = detected = 0
@@ -98,7 +98,7 @@ def main():
             else:
                 time.sleep(.06)
                 try:
-                    item = packet_frame((CACHE / "snapshot.packet").read_bytes(), time.monotonic(), time.time())
+                    item = packet_frame((CACHE / "snapshot.packet").read_bytes(), time.time())
                     if not item:
                         status = "收到過期影格"
                         continue
@@ -129,7 +129,7 @@ def main():
             else:
                 processed += 1
                 detected += bool(objects)
-                latency = (time.monotonic() - stamp) * 1000
+                latency = (time.time() - stamp) * 1000
                 status = f"結果延遲 {latency:.0f} ms，物件 " + (", ".join(o[0] for o in objects) or "0")
                 tmp = CACHE / f"vision-{os.getpid()}.tmp"
                 tmp.write_text(json.dumps([stamp,objects]))

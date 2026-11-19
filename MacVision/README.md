@@ -15,3 +15,16 @@
 ### 自車尾燈
 
 退出 Jetlink，執行本版 `Start-Mac-Vision.command` 後再開啟 Jetlink。3D 車道畫面會在自車車尾顯示紅色煞車燈與琥珀色方向燈。煞車燈讀取 comma 回報的 carState.brakeLights。左右方向燈與 HUD 箭頭共用閃爍節奏，雙黃燈兩側同閃。煞車與轉向可以同時顯示。車況訊號失效時熄滅燈號。安裝完成後，尾燈顯示直接讀取車況，不依賴鏡頭辨識。
+
+### 辨識到了，HUD 有沒有畫出來？
+
+每五秒的終端機紀錄末尾會列出 HUD 回報。HUD 上的 ROAD 圖示列顯示最近影格的物件類別，圖示位置固定；立體行人、車輛、三角錐與斑馬線條紋則依照可用的 ROAD 鏡頭校正與地面投影繪製。斑馬線條紋是辨識符號，大小不代表實際穿越道寬度。
+
+| 終端機回報 | 畫面狀態 |
+|---|---|
+| `HUD 3D: 2 \| projected` | HUD 程式已對這張影格送出兩個立體物件的繪圖指令。 |
+| `estimated height` | 有鏡頭角度校正，投影採用原 HUD 的預設鏡頭高度。 |
+| `no camera calibration`、`outside ground view` 或 `no ROAD projection` | ROAD 圖示列仍可提示辨識類別。 |
+| `2D view` | 目前畫面有圖示列，未進入立體車道繪製。 |
+| `result expired` | 已排除時間過期或超前的辨識結果。 |
+| `HUD: awaiting renderer` | 尚未收到新鮮的 HUD 繪圖回報。確認正在使用新版 Mac helper，並切到有 3D 車道的畫面，例如模式七。 |
