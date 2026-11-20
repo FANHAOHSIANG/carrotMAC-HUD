@@ -2,6 +2,7 @@
 import argparse
 import base64
 import json
+import math
 import os
 import struct
 import time
@@ -11,17 +12,50 @@ CACHE = Path(os.environ.get("CARROT_HUD_DIR", Path.home() / "Library/Caches/io.z
 KINDS = {"person", "motorcycle", "bicycle", "car", "truck", "bus"}
 
 
+def frame_identity(frame):
+    if not isinstance(frame, dict):
+        return None
+    frame_id = frame.get("frame")
+    captured = "capture_time" in frame
+    source_time = frame.get("capture_time" if captured else "time")
+    if (type(frame_id) is not int or frame_id < 0 or type(source_time) not in (int, float)
+            or not math.isfinite(source_time) or source_time < 0):
+        return None
+    return frame_id, source_time, "capture" if captured else "preview"
+
+
 def packet_frame(data, wall_now):
     received, = struct.unpack_from("<d", data)
     packet = json.loads(data[8:])
     cameras = packet["cameras"]
-    frame = cameras.get("road_hd") or cameras["road"]
-    age = packet["sent"] - frame.get("capture_time", frame["time"])
+    low, high = cameras.get("road"), cameras.get("road_hd")
+    low_key, high_key = frame_identity(low), frame_identity(high)
+    # The C4 creates both JPEGs from the same full ROAD image. Prefer native
+    # displayed ROAD preview if a sender presents conflicting capture identities.
+    use_hd = high_key is not None and (low is None or high_key == low_key)
+    frame, key = (high, high_key) if use_hd else (low, low_key)
+    if key is None:
+        return None
+    age = packet["sent"] - key[1]
     # Both Python processes share Unix time, even with different macOS runtimes.
     receipt_age = wall_now - received
     if not (0 <= receipt_age < .5 and 0 <= age < .4):
         return None
-    return (frame["frame"], frame["time"]), received - age, base64.b64decode(frame["jpeg"], validate=True)
+    return key, received - age, base64.b64decode(frame["jpeg"], validate=True)
+
+
+def publish_results(cache, key, stamp, scene_objects, frame_objects):
+    # Each file is independently complete. Older HUDs continue reading the
+    # smoothed scene list. Camera-view HUDs match unsmoothed coordinates to
+    # the C4 frame they actually displayed.
+    frame_id, source_time, time_kind = key
+    packet = {"version": 2, "camera": "road", "frame_id": frame_id,
+              "source_time": source_time, "time_kind": time_kind,
+              "stamp": stamp, "objects": frame_objects}
+    for name, value in (("vision", [stamp, scene_objects]), ("vision-frame", packet)):
+        tmp = cache / f"{name}-{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(value))
+        tmp.replace(cache / f"{name}.json")
 
 
 def box_iou(a, b):
@@ -201,9 +235,11 @@ def main():
             after_vehicle = time.perf_counter()
             cones = detect(cone, image, True)
             after_cone = time.perf_counter()
-            objects = smooth(previous, vehicles + cones)
+            frame_objects = vehicles + cones
+            objects = smooth(previous, [obj.copy() for obj in frame_objects])
             previous = objects
-            objects = objects + crossing.detect(image)
+            crosswalks = crossing.detect(image)
+            objects = objects + crosswalks
             if video:
                 h, w = image.shape[:2]
                 if writer is None:
@@ -221,9 +257,7 @@ def main():
                           f"，車人 {(after_vehicle-start)*1000:.0f} / 錐 {(after_cone-after_vehicle)*1000:.0f}"
                           f" / 斑馬線與後處理 {(time.perf_counter()-after_cone)*1000:.0f} ms"
                           "，物件 " + (", ".join(o[0] for o in objects) or "0"))
-                tmp = CACHE / f"vision-{os.getpid()}.tmp"
-                tmp.write_text(json.dumps([stamp,objects]))
-                tmp.replace(CACHE / "vision.json")
+                publish_results(CACHE, last_key, stamp, objects, frame_objects + crosswalks)
                 if preview:
                     preview.show(image, objects, stamp, fps)
     finally:

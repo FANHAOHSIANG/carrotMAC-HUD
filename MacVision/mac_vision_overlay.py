@@ -34,13 +34,19 @@ _last_report = 0.
 
 # Local intervals use monotonic time; timestamps shared with the detector use Unix time.
 _scene_feedback = None
+_placed_icons = None
 KINDS = ("person", "crosswalk", "cone", "motorcycle", "bicycle", "car", "bus", "truck")
+# Heights place the leader just above its observed body. The horizontal and
+# longitudinal coordinates always originate in the ROAD image.
+ICON_HEIGHT_M = {"car": 1.6, "bus": 2.55, "truck": 2.55, "motorcycle": 1.35,
+                 "bicycle": 1.25, "person": 1.8, "cone": .7, "crosswalk": .1}
+RESULT_MAX_AGE = .9
 
 
 def read_objects():
     try:
         stamp, objects = json.loads(RESULT.read_bytes())
-        if not 0 <= time.time() - stamp < .9:
+        if not 0 <= time.time() - stamp < RESULT_MAX_AGE:
             return [], "result expired", None
         valid = [item for item in objects if isinstance(item, list) and len(item) == 5
                  and item[0] in KINDS and all(isinstance(v, (int, float)) and math.isfinite(v)
@@ -88,9 +94,13 @@ def draw_icon(rl, kind, x, y):
             rl.draw_circle(x+dx,y+20,3,rl.GRAY)
 
 
+def begin_frame():
+    global _scene_feedback, _placed_icons
+    _scene_feedback = _placed_icons = None
+
+
 def draw_detection_notice(offset_x):
     import pyray as rl
-    global _scene_feedback
     if _scene_feedback is None:
         objects, reason, _ = read_objects()
         count = 0
@@ -98,15 +108,23 @@ def draw_detection_notice(offset_x):
             reason = "2D view"
     else:
         objects, count, reason = _scene_feedback
-        _scene_feedback = None
+    placed = 0
+    if _placed_icons is not None:
+        stamp, drawn = _placed_icons
+        if 0 <= time.time() - stamp < RESULT_MAX_AGE:
+            placed = drawn
+            reason += f" | icons {placed}"
+    begin_frame()
     report_drawn(count, reason)
     if objects:
         # Fixed legend: these icons indicate camera detections, never lane positions.
         kinds = {item[0] for item in objects}
         x, y = round(offset_x) + 23, 209
-        rl.draw_rectangle(x, y, 64 + 31*len(kinds), 34, rl.DARKGRAY)
-        rl.draw_text("ROAD", x+6, y+9, 17, rl.RAYWHITE)
-        x += 60
+        header = f"ROAD {placed}" if placed else "ROAD"
+        header_w = 60 + (6 + len(str(placed))*12 if placed else 0)
+        rl.draw_rectangle(x, y, header_w + 4 + 31*len(kinds), 34, rl.DARKGRAY)
+        rl.draw_text(header, x+6, y+9, 17, rl.RAYWHITE)
+        x += header_w
         for kind in KINDS:
             if kind in kinds:
                 draw_icon(rl, kind, x, y+4)
@@ -190,6 +208,8 @@ _matches = VehicleMatches()
 
 def draw(renderer, state, shift, _ego_y, native=()):
     global _scene_feedback
+    begin_frame()
+    renderer._mac_vision_scene_icons = None
     objects, reason, stamp = read_objects()
     drawn = 0
     drawn_bikes = set()
@@ -204,6 +224,116 @@ def draw(renderer, state, shift, _ego_y, native=()):
             reason = f"projection: {type(error).__name__}"
     _scene_feedback = (objects, drawn, reason)
     return drawn_bikes
+
+
+def has_scene_icons(renderer):
+    return bool(getattr(renderer, "_mac_vision_scene_icons", None))
+
+
+def _number(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _camera_objects(renderer, display_frame):
+    if not isinstance(display_frame, (tuple, list)) or len(display_frame) != 4:
+        return ()
+    camera, frame_id, frame_time, time_kind = display_frame
+    if (camera != "road" or type(frame_id) is not int or frame_id < 0
+            or not _number(frame_time) or time_kind not in ("capture", "preview")):
+        return ()
+    path = RESULT.with_name("vision-frame.json")
+    try:
+        stat = path.stat()
+        signature = (path, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        if not 0 < stat.st_size <= 65536:
+            return ()
+        cache = getattr(renderer, "_mac_vision_camera_packet", None)
+        if cache is None or cache[0] != signature:
+            packet = json.loads(path.read_bytes())
+            renderer._mac_vision_camera_packet = signature, packet
+        else:
+            packet = cache[1]
+    except (OSError, ValueError):
+        return ()
+    if not isinstance(packet, dict) or packet.get("version") != 2 or packet.get("camera") != camera:
+        return ()
+    detected_id, detected_time, stamp = packet.get("frame_id"), packet.get("source_time"), packet.get("stamp")
+    if (type(detected_id) is not int or detected_id < 0 or not _number(detected_time)
+            or packet.get("time_kind") != time_kind or not _number(stamp)
+            or not 0 <= time.time() - stamp < RESULT_MAX_AGE):
+        return ()
+    exact_frame = frame_id == detected_id and frame_time == detected_time
+    # Legacy preview time measures JPEG creation and cannot establish capture skew.
+    near_frame = time_kind == "capture" and frame_id > detected_id and 0 < frame_time - detected_time <= .25
+    if not (exact_frame or near_frame):
+        return ()
+    rows = packet.get("objects")
+    if not isinstance(rows, list):
+        return ()
+    return tuple(row for row in rows[:32] if isinstance(row, list) and len(row) == 5
+                 and row[0] in KINDS and all(_number(v) for v in row[1:])
+                 and 0 <= row[1] <= 1 and 0 <= row[2] <= 1 and 0 < row[3] <= 1 and 0 < row[4] <= 1)
+
+
+def has_camera_icons(renderer, display_frame):
+    return bool(_camera_objects(renderer, display_frame))
+
+
+def draw_camera_icons(renderer, state, projection, display_frame, metric_rects=()):
+    """Place unsmoothed ROAD detections on a verified live film capture."""
+    global _scene_feedback, _placed_icons
+    if projection is None or projection.wide_camera or not getattr(state, "onroad", False):
+        return 0
+    objects = _camera_objects(renderer, display_frame)
+    if not objects:
+        return 0
+    from cluster_config import DESIGN_HEIGHT
+    from mac_vision_icons import draw_class_icons
+
+    view, video = projection.dest, projection.video_dest
+    left, top, right, bottom = view.x, view.y, view.x + view.width, view.y + view.height
+    anchors = []
+    for kind, u, v, w, h in sorted(objects, key=lambda row: row[2], reverse=True):
+        x1 = max(left, video.x + (u - w / 2) * video.width)
+        x2 = min(right, video.x + (u + w / 2) * video.width)
+        y1 = max(top, video.y + (v - h) * video.height)
+        y2 = min(bottom, video.y + v * video.height)
+        if x2 > x1 and y2 > y1:
+            anchors.append((kind, (x1 + x2) / 2, y1))
+    placed = draw_class_icons(anchors, (left, top, right, bottom),
+                              36 * renderer.height / DESIGN_HEIGHT, metric_rects)
+    if placed:
+        _placed_icons = renderer._mac_vision_camera_packet[1]["stamp"], placed
+        _scene_feedback = objects, 0, "2D view"
+    return placed
+
+
+def draw_scene_icons(renderer, state, camera, bounds, metric_rects=()):
+    """Draw this scene's fresh observations in its native label coordinates."""
+    global _placed_icons
+    observations = getattr(renderer, "_mac_vision_scene_icons", None)
+    renderer._mac_vision_scene_icons = None
+    if not observations:
+        return 0
+    stamp, points = observations
+    if not 0 <= time.time() - stamp < RESULT_MAX_AGE:
+        return 0
+    import pyray as rl
+    from cluster_config import DESIGN_HEIGHT
+    from cluster_renderer import world_to_screen_label_anchor
+    from cluster_scene import render_scene_forward_m
+    from mac_vision_icons import draw_class_icons
+
+    anchors = []
+    for kind, right, forward in sorted(points, key=lambda p: p[2]):
+        point = rl.Vector3(right, render_scene_forward_m(forward, state), ICON_HEIGHT_M[kind])
+        screen = world_to_screen_label_anchor(point, camera, renderer.width, renderer.height)
+        if screen is not None:
+            anchors.append((kind, screen.x, screen.y))
+    placed = draw_class_icons(anchors, bounds, 36 * renderer.height / DESIGN_HEIGHT, metric_rects)
+    if placed:
+        _placed_icons = stamp, placed
+    return placed
 
 
 def draw_world(renderer, state, shift, objects, stamp, native, drawn_bikes):
@@ -242,6 +372,13 @@ def draw_world(renderer, state, shift, objects, stamp, native, drawn_bikes):
         targets.append((vehicle.center.x + shift, distance))
         native_indices.append(index)
     merged, bikes, standalone = _matches.match(stamp, points, targets)
+    # The existing two-capture rule admits an unmatched car-like object. A
+    # ROAD observation paired with an existing car already has corroboration.
+    # Keep each icon at the measured ROAD position, including the matched ones.
+    admitted = tuple(point for i, point in enumerate(points)
+                     if point[0] not in ("car", "truck", "bus") or i in merged or i in standalone)
+    if admitted:
+        renderer._mac_vision_scene_icons = stamp, admitted
     from cluster_scene import render_scene_forward_m
     for i, (kind, right, forward) in enumerate(points):
         if i in merged:

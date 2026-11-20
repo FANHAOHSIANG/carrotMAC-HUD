@@ -2,7 +2,7 @@
 
 ## Mac Vision 與 HUD 整合測試版
 
-已安裝 CarrotMacHUD 的 Mac 可退出 Jetlink 和 HUD helper，執行根目錄的 `Start-IONIQ5-HUD.command`。首次啟動需連網下載辨識模型與套件。看到重新啟動提示後，保持終端機開啟，開 Jetlink 並切到模式七。此入口會一次套用測速與紅綠燈新位置、IONIQ 5 自車模型與車尾燈，並啟動 Mac Vision。下方 stable 連結提供獨立正式版。
+已安裝 CarrotMacHUD 的 Mac 可在停車時退出 Jetlink 與 HUD helper，執行這個測試版根目錄的 `Start-IONIQ5-HUD.command`。完成後重新開啟 Jetlink，在版面 5 的 3D 車道或其他有車道的版面查看物件位置旁的分類圖示。這個入口會安裝 Mac 顯示更新並啟用 Mac Vision 背景辨識，第一次需要連網下載模型與套件。下方 stable 連結提供正式版。
 
 ### 行車畫面的箭頭與速限
 

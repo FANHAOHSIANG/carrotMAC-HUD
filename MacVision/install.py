@@ -1,4 +1,5 @@
 """Install or remove Mac Vision and the Mac-only HUD appearance controls."""
+import ast
 from pathlib import Path
 import shutil
 import subprocess
@@ -8,7 +9,8 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 SRC = Path(__file__).resolve().parent
 REL = Path("openpilot/selfdrive/carrot/cluster")
 FILES = ("cluster_models.py", "cluster_live.py", "cluster_renderer.py", "cluster_scene.py", "cluster_route_replay.py")
-MODULES = ("hud_style.py", "ioniq5_model.py", "mac_vision_overlay.py", "hud_road_edges.py")
+MODULES = ("hud_style.py", "ioniq5_model.py", "mac_vision_overlay.py", "hud_road_edges.py",
+           "hud_object_icons.py", "mac_vision_icons.py")
 LOOP = "            for vehicle in scene.vehicles:\n"
 LEGACY_MODEL_LOOP = """            if scene.vehicles:
                 from ioniq5_model import draw as draw_ioniq5
@@ -39,6 +41,83 @@ LEGACY_CAR_MARKER = ('        self._draw_vehicle_box(marker_vehicle)\n',
      '            draw_native_car(self, vehicle, Vec3)\n'
      '        else:\n'
      '            self._draw_vehicle_box(marker_vehicle)\n')
+# These insertions run inside the same post-3D matrix as native distance/speed
+# labels. At rest the existing renderer doesn't need any extra text measurement.
+BADGE_CALL = "            self._draw_vehicle_badges(\n"
+BADGE_END = ('                state.radar_source_color_mode,\n'
+             '            )\n'
+             '            self._profile_add("draw_scene.vehicle_badges", profile_stage)\n')
+BADGE_SIGNATURE = ('        radar_source_color_mode: int = 0,\n'
+                   '    ) -> None:\n'
+                   '        show_vehicle_info = radar_info_shows_vehicle(radar_info_mode)\n')
+METRIC_SIGNATURE = ('        bounds: tuple[float, float, float, float] | None = None,\n'
+                    '    ) -> None:\n'
+                    '        lead = next((label for label in labels if vehicle_has_lead_one_metrics(label.vehicle)), None)\n')
+METRIC_RECTS_PARAM = '        metric_rects: list[tuple[float, float, float, float]] | None = None,\n'
+VISIBLE_METRIC = """            if protected is not None and rectangles_overlap(self._vehicle_metric_label_rect(label), protected):
+                continue
+            visible.append(label)
+        if lead is not None:
+            visible.append(lead)
+"""
+CAMERA_BACKGROUND = """    def _draw_camera_background(
+        self,
+        state: ClusterUiState,
+        projection: CameraOverlayProjection | None = None,
+    ) -> None:
+"""
+CAMERA_OVERLAY = CAMERA_BACKGROUND.replace('_draw_camera_background', '_draw_camera_projected_overlay').replace(
+    '        self,\n', '        self,\n        scene: ClusterScene,\n')
+CAMERA_PROFILE = '            self._profile_add("render_world.camera_projected_overlay", profile_stage)\n'
+CAMERA_OVERLAY_CALL = '            self._draw_camera_projected_overlay(scene, state, projection)\n'
+CAMERA_VIGNETTE = '                rl.draw_rectangle_rec(projection.dest, rl_color((0, 0, 0), CAMERA_BACKGROUND_VIGNETTE_ALPHA))\n'
+CAMERA_METRIC_END = ('            ))\n'
+                     '            self._profile_add("render_world.camera_projected_overlay.vehicles", profile_stage)\n')
+CAMERA_HOOKS = (
+    (CAMERA_BACKGROUND, CAMERA_BACKGROUND.replace(' -> None:', ' -> tuple | None:')),
+    ('            self._draw_camera_background(state, projection)\n',
+     '            display_frame = self._draw_camera_background(state, projection)\n'),
+    (CAMERA_VIGNETTE, CAMERA_VIGNETTE +
+     '                if texture is None and (overlay is None or overlay.video_rgba is None):\n'
+     '                    return getattr(live_camera, "last_frame", None)\n'),
+    (CAMERA_OVERLAY, CAMERA_OVERLAY.replace('    ) -> None:', METRIC_RECTS_PARAM + '    ) -> None:')),
+    (CAMERA_OVERLAY_CALL + CAMERA_PROFILE,
+     '            from mac_vision_overlay import draw_camera_icons, has_camera_icons\n'
+     '            metric_rects = [] if has_camera_icons(self, display_frame) else None\n'
+     '            self._draw_camera_projected_overlay(scene, state, projection, metric_rects)\n'
+     '            if metric_rects is not None:\n'
+     '                draw_camera_icons(self, state, projection, display_frame, metric_rects)\n' + CAMERA_PROFILE),
+    (CAMERA_METRIC_END, CAMERA_METRIC_END.replace('            ))\n', '            ), metric_rects)\n')),
+)
+ICON_HOOKS = (
+    (BADGE_CALL, '            from mac_vision_overlay import draw_scene_icons, has_scene_icons\n'
+     '            metric_rects = [] if has_scene_icons(self) else None\n' + BADGE_CALL),
+    (BADGE_END, """                state.radar_source_color_mode,
+                metric_rects,
+            )
+            if metric_rects is not None:
+                left = driving_offset_x if abs(view_shift_x) > .001 else 0.
+                right = left + NAVI_LIVE_PANEL_X * self.width / DESIGN_WIDTH if abs(view_shift_x) > .001 else float(self.width)
+                bounds = (left - scene_offset_x, 0., right - scene_offset_x, self.height)
+                draw_scene_icons(self, state, camera, bounds, metric_rects)
+            self._profile_add("draw_scene.vehicle_badges", profile_stage)
+"""),
+    (BADGE_SIGNATURE, BADGE_SIGNATURE.replace('    ) -> None:', METRIC_RECTS_PARAM + '    ) -> None:')),
+    ('        self._draw_vehicle_metric_labels(metric_labels)\n',
+     '        self._draw_vehicle_metric_labels(metric_labels, metric_rects=metric_rects)\n'),
+    (METRIC_SIGNATURE, METRIC_SIGNATURE.replace('    ) -> None:', METRIC_RECTS_PARAM + '    ) -> None:')),
+    (VISIBLE_METRIC, """            rect = self._vehicle_metric_label_rect(label) if protected is not None or metric_rects is not None else None
+            if protected is not None and rectangles_overlap(rect, protected):
+                continue
+            visible.append(label)
+            if metric_rects is not None:
+                metric_rects.append(rect)
+        if lead is not None:
+            visible.append(lead)
+            if metric_rects is not None:
+                metric_rects.append((x + dx, y + dy, width, height))
+"""),
+)
 HOOKS = (
     (LOOP, MODEL_LOOP),
     ("LEAD_ONE_DISTANCE_FONT_SIZE = 24\n", "LEAD_ONE_DISTANCE_FONT_SIZE = 28\n"),
@@ -60,7 +139,57 @@ HOOKS = (
     (LIMIT, '        from hud_style import SHOW_LIMIT\n'
      '        if SHOW_LIMIT and (state.speed_limit_kph is not None or state.navi_debug is not None):\n'),
     (OLD_LAMPS, NEW_LAMPS),
+    *ICON_HOOKS,
+    *CAMERA_HOOKS,
 )
+
+# RemoteRoadCamera remembers its texture only after uploading the JPEG. Extend
+# its actual cache key for either known receiver revision, retaining the
+# receiver's original line for exact rollback. Other backends keep their legend.
+CAMERA_KEY = "    key = (name, frame['frame'])\n"
+CAPTURE_KEY = "    key = (name, frame['frame'], frame.get('capture_time', frame['time']))\n"
+TIME_KIND = "'capture' if 'capture_time' in frame else 'preview'"
+CAMERA_KEYS = (
+    (CAMERA_KEY, "    key += (frame.get('capture_time', frame['time']), " + TIME_KIND + ")  # Mac Vision\n"),
+    (CAPTURE_KEY, "    key += (" + TIME_KIND + ",)  # Mac Vision\n"),
+)
+
+
+def receiver_update(dest, remove):
+    path = dest.parents[3] / "tools/jetlink/hud_camera.py" if len(dest.parents) >= 4 else None
+    if path is None or not path.is_file():
+        return None
+    original = path.read_text()
+    source = original
+    for anchor, addition in CAMERA_KEYS:
+        source = source.replace(anchor + addition, anchor)
+    if not remove:
+        for anchor, addition in CAMERA_KEYS:
+            if source.count(anchor) == 1:
+                source = source.replace(anchor, anchor + addition)
+                break
+    if original != source:
+        compile(source, str(path), "exec")
+        return path, source.encode()
+    return None
+
+
+FRAME_RESET = '        from mac_vision_overlay import begin_frame\n        begin_frame()\n'
+
+
+def set_frame_reset(source, remove):
+    source = source.replace(FRAME_RESET, '')
+    if remove:
+        return source
+    # render() also runs for parking, graph and map views that bypass _render_world.
+    # Insert after the installed docstring, which some localized helpers customize.
+    renderer = next(node for node in ast.parse(source).body if isinstance(node, ast.ClassDef) and node.name == 'ClusterUiRenderer')
+    render = next(node for node in renderer.body if isinstance(node, ast.FunctionDef) and node.name == 'render')
+    first = render.body[0]
+    index = first.end_lineno if ast.get_docstring(render) is not None else first.lineno - 1
+    lines = source.splitlines(keepends=True)
+    lines.insert(index, FRAME_RESET)
+    return ''.join(lines)
 
 
 def write_file(path, data):
@@ -126,13 +255,22 @@ def install(dest, remove):
                 source = source.replace(before, after)
             for name in MODULES:
                 writes[name] = (SRC / name).read_bytes()
-        renderer.write_text(source)
+        renderer.write_text(set_frame_reset(source, remove))
         for name in FILES:
             writes[name] = (stage / name).read_bytes()
         for name, data in writes.items():
             compile(data, name, "exec")
+        camera = receiver_update(dest, remove)
+        if camera is not None:
+            write_file(*camera)
         for name, data in writes.items():
             write_file(dest / name, data)
+        if remove:
+            # Keep locally edited helpers; the renderer no longer imports them.
+            for name in MODULES:
+                path = dest / name
+                if path.is_file() and path.read_bytes() == (SRC / name).read_bytes():
+                    path.unlink()
 
 
 if __name__ == "__main__":
