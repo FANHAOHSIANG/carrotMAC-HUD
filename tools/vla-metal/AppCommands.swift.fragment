@@ -1,8 +1,15 @@
     CommandMenu("VLA") {
       Button("離線推理測試…") {
-        let url = Bundle.main.resourceURL?.appendingPathComponent("VLA-Offline/README.zh-TW.md")
+        let url = Bundle.main.resourceURL?.appendingPathComponent("VLA-Offline/Run-VLA-Offline.command")
         if let url, FileManager.default.fileExists(atPath: url.path) {
-          NSWorkspace.shared.activateFileViewerSelecting([url])
+          let alert = NSAlert()
+          alert.messageText = "開始離線測試"
+          alert.informativeText = "開啟測試工具後，請退出 Jetlink 與 HUD、拔除 C4，再依工具提示繼續。"
+          alert.addButton(withTitle: "開啟工具")
+          alert.addButton(withTitle: "取消")
+          if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(url)
+          }
         } else {
           let alert = NSAlert()
           alert.messageText = "找不到 VLA 離線工具"
