@@ -12,7 +12,13 @@ python3 scripts/build_vla_jetlink.py --output "$HOME/CarrotVLA-Jetlink-candidate
 
 需要現有 Jetlink Mac 編譯工具（完整 Xcode、xcodegen 等）。使用 versions.json 的固定官方原始碼，套用現有 HUD 補丁與新增 VLA 選單，先執行 Python 單元測試，再編譯並驗證 App 簽章。候選 App 放在 output 下的 macos/build/Jetlink.app，不會替換正式 App。原始碼與編譯尚未在實體 Mac 驗證。
 
-Jetlink 頂部選單 VLA 有「離線推理測試」及「檢視 VLA 回放結果」。前者在 Finder 選取 App 內附的說明；如要執行推理，請使用 repository 的 tools/vla-metal（或將 App 內 VLA-Offline 完整複製至可寫目錄），不可在已簽署 App bundle 內建立 venv 或更動檔案。退出 Jetlink、HUD 並斷開 C4 後才執行下列回放步驟。程式啟動與每個樣本前檢查 Jetlink 程序是否已停止。這不是完整的硬體互鎖，仍需手動斷開設備。完成後可從候選 App 的檢視選單選擇 results.jsonl，看到前十筆判讀及延遲中位數。候選版不啟動任何即時 VLA 程序。
+Jetlink 頂部選單 VLA → 離線推理測試會開啟 Terminal 的互動工具。退出 Jetlink、HUD 並斷開 C4，依提示按 Enter，選取含 rlog 與 fcamera.hevc 的單段資料夾，或已轉換的 frames.jsonl。工具建立獨立 venv、下載固定 schema 並轉換影格、建置固定 llama.cpp Metal 版、驗證與下載權重，再測試最多 13 張。結果存到 ~/Library/Application Support/CarrotMacHUD/VLA-Offline/run.*，完成後在 Finder 選取 results.jsonl。再開候選 App，從 VLA → 檢視 VLA 回放結果匯入。也可以不編譯 App，直接從測試分支根目錄執行：
+
+```sh
+bash tools/vla-metal/Run-VLA-Offline.command
+```
+
+首次需要網路、Python 3.11+、git、Xcode 命令列工具與 CMake；若缺 CMake，工具會停止並提示安裝。預先準備好本機 C4 行車紀錄；不會登入 C4 或抓取遠端行車紀錄。權重及編譯產物會快取。若 schema 或資料版本不符、沒有有效配對影格、引擎無法編譯，工具會停止，不會用假造位姿或 CPU 回退。原始碼尚未在 Mac 執行驗證。程式啟動與每張樣本前檢查 Jetlink 已退出，不是硬體互鎖；務必手動拔除 C4。
 
 ## 準備
 
@@ -30,7 +36,7 @@ python -m unittest -v test_replay
 
 ## 準備行車紀錄
 
-manifest 是預先匯出的本機 JSONL，每行包括 image（相對於 manifest 的前向影像路徑）、timestamp_us（相機時間）、egomotion（9 筆由早到晚、每 0.25 秒的實際車輛歷史位姿 [前向公尺, 左向公尺, 逆時針弧度]，最後為 [0,0,0]）。可附帶 primary 欄位以保留已記錄主模型結果。請勿用虛構位姿衡量實際判斷能力。本版不直接讀 rlog，需先在原 Tony 回放工具或資料匯出環境完成同步。
+manifest 是預先匯出的本機 JSONL，每行包括 image（相對於 manifest 的前向影像路徑）、timestamp_us（相機時間）、egomotion（9 筆由早到晚、每 0.25 秒的實際車輛歷史位姿 [前向公尺, 左向公尺, 逆時針弧度]，最後為 [0,0,0]）。可附帶 primary 欄位以保留已記錄主模型結果。請勿用虛構位姿衡量實際判斷能力。互動工具會使用固定 Tony schema 自動嘗試解析 rlog 與影像，其他版本的紀錄相容性尚待驗證。
 
 退出 Jetlink、HUD，斷開 C4 後才執行（用實際檔案位置代換）：
 
@@ -42,7 +48,7 @@ python replay.py --offline-bench \
   --max-frames 13 > results.jsonl
 ```
 
-第一次 --fetch 從固定 Hugging Face revision 下載模型與影像投影器（約 2.95 GB），驗證大小及 SHA-256。之後可省略 --fetch。若有多個 Metal 裝置，增加 --device MTL0 或實際列出的 ID。輸出 JSONL 含每張影像的 longitudinal/lateral 判讀、推理毫秒數、裝置和固定權重版本；未知結果為 null。沒有自動 HUD 顯示，也沒有 GPU 佔用率採樣。
+第一次 --fetch 從固定 Hugging Face revision 下載模型與影像投影器（約 2.95 GB），驗證大小及 SHA-256。之後可省略 --fetch。若有多個 Metal 裝置，增加 --device MTL0 或實際列出的 ID。輸出 JSONL 含每張影像的 longitudinal/lateral 判讀、推理毫秒數、裝置和固定權重版本；未知結果為 null。可在候選 Jetlink App 的 VLA 選單檢視結果，沒有行車 HUD 顯示，也沒有 GPU 佔用率採樣。
 
 ## 驗證限制
 
