@@ -203,6 +203,11 @@ def reference(directory, server, gpu):
         proc.wait()
 
 
+def require_jetlink_stopped():
+  result = subprocess.run(['/usr/bin/pgrep', '-x', 'Jetlink'], stdout=subprocess.DEVNULL)
+  if result.returncode != 1:
+    raise RuntimeError('Quit Jetlink before offline VLA replay; disconnect comma and stop HUD as well')
+
 def main():
   p = argparse.ArgumentParser(description=__doc__)
   p.add_argument('--weights', type=Path, required=True)
@@ -215,6 +220,7 @@ def main():
   a = p.parse_args()
   if platform.system() != 'Darwin' or platform.machine() != 'arm64':
     p.error('Apple silicon macOS required')
+  require_jetlink_stopped()
   if a.max_frames < 1:
     p.error('--max-frames must be positive')
   if not a.manifest.is_file():
@@ -229,6 +235,7 @@ def main():
   count = 0
   with reference(a.weights.resolve(), a.server.resolve(), a.device) as (device, predict):
     for row, rgb in islice(samples(a.manifest.resolve()), a.max_frames):
+      require_jetlink_stopped()
       started = time.perf_counter()
       words = predict(rgb, row['egomotion'])
       elapsed = (time.perf_counter() - started) * 1000
