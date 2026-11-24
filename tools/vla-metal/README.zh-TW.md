@@ -2,6 +2,18 @@
 
 此工具取自 Tony [b0ba1f13](https://github.com/TonyBinheWu/sunnypilot/commit/b0ba1f13db3fbed94ea88c8b93cec488ef3c2b7f) 的回放參考執行器，改用 llama.cpp Metal。不會安裝或修改 Jetlink、HUD、C4、modeld 或 CAN。沒有即時相機、USB、車輛控制或回傳介面。只在 Mac 與 C4 分離、Jetlink 與 HUD 均退出的離線環境執行。
 
+## Jetlink App 整合候選版
+
+在測試分支根目錄、退出 Jetlink 並斷開 C4 後執行：
+
+```sh
+python3 scripts/build_vla_jetlink.py --output "$HOME/CarrotVLA-Jetlink-candidate"
+```
+
+需要現有 Jetlink Mac 編譯工具（完整 Xcode、xcodegen 等）。使用 versions.json 的固定官方原始碼，套用現有 HUD 補丁與新增 VLA 選單，先執行 Python 單元測試，再編譯並驗證 App 簽章。候選 App 放在 output 下的 macos/build/Jetlink.app，不會替換正式 App。原始碼與編譯尚未在實體 Mac 驗證。
+
+Jetlink 頂部選單 VLA 有「離線推理測試」及「檢視 VLA 回放結果」。前者在 Finder 選取 App 內附的說明；如要執行推理，請使用 repository 的 tools/vla-metal（或將 App 內 VLA-Offline 完整複製至可寫目錄），不可在已簽署 App bundle 內建立 venv 或更動檔案。退出 Jetlink、HUD 並斷開 C4 後才執行下列回放步驟。程式啟動與每個樣本前檢查 Jetlink 程序是否已停止。這不是完整的硬體互鎖，仍需手動斷開設備。完成後可從候選 App 的檢視選單選擇 results.jsonl，看到前十筆判讀及延遲中位數。候選版不啟動任何即時 VLA 程序。
+
 ## 準備
 
 Apple Silicon macOS、Python 3.11 或更新版本、至少約 3 GB 權重空間及額外統一記憶體。記憶體與延遲未實機驗證。安裝獨立 Python 環境：
