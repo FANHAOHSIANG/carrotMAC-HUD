@@ -39,8 +39,9 @@ def main():
     app = dest/'macos/build/Jetlink.app'
     resources = app/'Contents/Resources/VLA-Offline'
     resources.mkdir(parents=True, exist_ok=False)
-    for name in ('replay.py','test_replay.py','README.zh-TW.md','LICENSE.upstream'):
+    for name in ('replay.py','test_replay.py','README.zh-TW.md','LICENSE.upstream','export_segment.py','Run-VLA-Offline.command'):
         shutil.copy2(root/'tools/vla-metal'/name,resources/name)
+    (resources/'Run-VLA-Offline.command').chmod(0o755)
     run('make','-C',dest/'macos','sign',env=env)
     run('codesign','--verify','--deep','--strict',app)
     print(f'候選 App: {app}')
