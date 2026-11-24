@@ -1,0 +1,56 @@
+    CommandMenu("VLA") {
+      Button("離線推理測試…") {
+        let url = Bundle.main.resourceURL?.appendingPathComponent("VLA-Offline/README.zh-TW.md")
+        if let url, FileManager.default.fileExists(atPath: url.path) {
+          NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+          let alert = NSAlert()
+          alert.messageText = "找不到 VLA 離線工具"
+          alert.informativeText = "請重新編譯 VLA 測試版。"
+          alert.runModal()
+        }
+      }
+      Button("檢視 VLA 回放結果…") {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "選擇離線回放產生的 results.jsonl"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let alert = NSAlert()
+        alert.messageText = "VLA 離線回放結果（非行車建議）"
+        do {
+          let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+          guard size > 0 && size <= 2_000_000 else {
+            alert.informativeText = "檔案為空或超過 2 MB。"
+            alert.runModal()
+            return
+          }
+          let data = try String(contentsOf: url, encoding: .utf8)
+          var rows: [[String: Any]] = []
+          for line in data.split(whereSeparator: \.isNewline) {
+            guard let obj = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  obj["backend"] as? String == "metal",
+                  obj["action"] is [String: Any],
+                  let ms = obj["inference_ms"] as? Double, ms.isFinite, ms >= 0 else {
+              throw CocoaError(.fileReadCorruptFile)
+            }
+            rows.append(obj)
+          }
+          let times = rows.compactMap { $0["inference_ms"] as? Double }.sorted()
+          guard !times.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+          let mid = times.count / 2
+          let median = times.count % 2 == 0 ? (times[mid - 1] + times[mid]) / 2 : times[mid]
+          let details = rows.prefix(10).enumerated().map { index, row in
+            let action = row["action"] as? [String: Any] ?? [:]
+            let longitudinal = action["longitudinal"] as? String ?? "未判定"
+            let lateral = action["lateral"] as? String ?? "未判定"
+            let ms = row["inference_ms"] as? Double ?? 0
+            return "\(index + 1). \(longitudinal) / \(lateral) · \(String(format: "%.1f", ms)) ms"
+          }.joined(separator: "\n")
+          alert.informativeText = "樣本：\(rows.count)\n延遲中位數：\(String(format: "%.1f", median)) ms\n\n\(details)\n\n僅供離線研究，不影響主模型。"
+        } catch {
+          alert.informativeText = "無法讀取 Metal VLA 回放結果：\(error.localizedDescription)"
+        }
+        alert.runModal()
+      }
+    }
