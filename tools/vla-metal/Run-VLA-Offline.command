@@ -7,9 +7,19 @@ BASE="$HOME/Library/Application Support/CarrotMacHUD/VLA-Offline"
 echo "請先退出 Jetlink、HUD，並拔除 C4 USB。"
 read -r -p "確認已離線，按 Enter 繼續（Ctrl-C 取消）" _
 if pgrep -x Jetlink >/dev/null; then echo "Jetlink 尚未退出，請退出後重開工具。"; exit 1; fi
-MODE="$(osascript -e 'choose from list {"C4 原始紀錄資料夾", "已轉換的 frames.jsonl"} with prompt "選擇離線資料來源" default items {"C4 原始紀錄資料夾"}' -e 'result as text')"
-[[ "$MODE" != false ]] || exit 0
-if [[ "$MODE" == "C4 原始紀錄資料夾" ]]; then
+ROUTE_URL="${1:-${CARROT_VLA_ROUTE_URL:-}}"
+if [[ -n "$ROUTE_URL" ]]; then
+  MODE="網路行車紀錄"
+else
+  MODE="$(osascript -e 'choose from list {"網路行車紀錄", "C4 原始紀錄資料夾", "已轉換的 frames.jsonl"} with prompt "選擇離線資料來源" default items {"網路行車紀錄"}' -e 'result as text')"
+  [[ "$MODE" != false ]] || exit 0
+fi
+if [[ "$MODE" == "網路行車紀錄" ]]; then
+  if [[ -z "$ROUTE_URL" ]]; then
+    ROUTE_URL="$(osascript -e 'text returned of (display dialog "貼上先前 Carrot 行車紀錄網址" default answer "")')" || exit 0
+  fi
+  [[ -n "$ROUTE_URL" ]] || exit 0
+elif [[ "$MODE" == "C4 原始紀錄資料夾" ]]; then
   INPUT="$(osascript -e 'POSIX path of (choose folder with prompt "選擇含 rlog 與 fcamera.hevc 的單段資料夾")')" || exit 0
   [[ -f "$INPUT/fcamera.hevc" ]] || { echo "找不到 fcamera.hevc"; exit 1; }
   [[ -f "$INPUT/rlog" || -f "$INPUT/rlog.zst" || -f "$INPUT/rlog.bz2" ]] || { echo "找不到 rlog"; exit 1; }
@@ -23,7 +33,11 @@ if [[ ! -x "$BASE/venv/bin/python" ]]; then python3 -m venv "$BASE/venv"; fi
 PY="$BASE/venv/bin/python"
 "$PY" -m pip install numpy opencv-python pycapnp zstandard
 "$PY" -m unittest discover -s "$HERE" -p test_replay.py -v
-if [[ "$MODE" == "C4 原始紀錄資料夾" ]]; then
+if [[ "$MODE" == "網路行車紀錄" ]]; then
+  "$PY" "$HERE/download_route.py" --route-url "$ROUTE_URL" --output "$RUN/segment"
+  INPUT="$RUN/segment"
+fi
+if [[ "$MODE" == "C4 原始紀錄資料夾" || "$MODE" == "網路行車紀錄" ]]; then
   SCHEMA="$BASE/schema-b0ba1f13"
   PIN=b0ba1f13db3fbed94ea88c8b93cec488ef3c2b7f
   if [[ ! -d "$SCHEMA/.git" ]]; then
