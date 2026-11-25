@@ -12,13 +12,13 @@ python3 scripts/build_vla_jetlink.py --output "$HOME/CarrotVLA-Jetlink-candidate
 
 需要現有 Jetlink Mac 編譯工具（完整 Xcode、xcodegen 等）。使用 versions.json 的固定官方原始碼，套用現有 HUD 補丁與新增 VLA 選單，先執行 Python 單元測試，再編譯並驗證 App 簽章。候選 App 放在 output 下的 macos/build/Jetlink.app，不會替換正式 App。原始碼與編譯尚未在實體 Mac 驗證。
 
-Jetlink 頂部選單 VLA → 離線推理測試會開啟 Terminal 的互動工具。退出 Jetlink、HUD 並斷開 C4，依提示按 Enter，選取含 rlog 與 fcamera.hevc 的單段資料夾，或已轉換的 frames.jsonl。工具建立獨立 venv、下載固定 schema 並轉換影格、建置固定 llama.cpp Metal 版、驗證與下載權重，再測試最多 13 張。結果存到 ~/Library/Application Support/CarrotMacHUD/VLA-Offline/run.*，完成後在 Finder 選取 results.jsonl。再開候選 App，從 VLA → 檢視 VLA 回放結果匯入。也可以不編譯 App，直接從測試分支根目錄執行：
+Jetlink 頂部選單 VLA → 離線推理測試會開啟 Terminal 的互動工具。退出 Jetlink、HUD 並斷開 C4，依提示按 Enter，選取含 rlog 與 fcamera.hevc 或 qcamera.ts 的單段資料夾，或已轉換的 frames.jsonl。工具建立獨立 venv、下載固定 schema 並轉換影格、建置固定 llama.cpp Metal 版、驗證與下載權重，再測試最多 13 張。結果存到 ~/Library/Application Support/CarrotMacHUD/VLA-Offline/run.*，完成後在 Finder 選取 results.jsonl。再開候選 App，從 VLA → 檢視 VLA 回放結果匯入。也可以不編譯 App，直接從測試分支根目錄執行：
 
 ```sh
 bash tools/vla-metal/Run-VLA-Offline.command
 ```
 
-首次需要網路、Python 3.11+、git、Xcode 命令列工具與 CMake；若缺 CMake，工具會停止並提示安裝。可直接使用公開分享給自己的 Carrot route 網址（網路行車紀錄模式），不登入 C4。工具從 /manifest 找到同段 rlog 與 fcamera.hevc，依清單大小核對下載，預設只下載第一個符合的片段；若只有 qcamera.ts 則停止。也可使用本機紀錄。個人網址由參數或對話框傳入，不寫進 GitHub。權重及編譯產物會快取。若 schema 或資料版本不符、沒有有效配對影格、引擎無法編譯，工具會停止，不會用假造位姿或 CPU 回退。原始碼尚未在 Mac 執行驗證。程式啟動與每張樣本前檢查 Jetlink 已退出，不是硬體互鎖；務必手動拔除 C4。
+首次需要網路、Python 3.11+、git、Xcode 命令列工具與 CMake；若缺 CMake，工具會停止並提示安裝。可直接使用公開分享給自己的 Carrot route 網址（網路行車紀錄模式），不登入 C4。工具從 /manifest 找同段 rlog 與 fcamera.hevc，若無原始影像則使用 qcamera.ts，依清單大小核對下載，只下載第一個符合優先順序的片段。也可使用本機紀錄。個人網址由參數或對話框傳入，不寫進 GitHub。權重及編譯產物會快取。若 schema 或資料版本不符、沒有有效配對影格、引擎無法編譯，工具會停止，不會用假造位姿或 CPU 回退。原始碼尚未在 Mac 執行驗證。程式啟動與每張樣本前檢查 Jetlink 已退出，不是硬體互鎖；務必手動拔除 C4。
 
 ## 準備
 
@@ -69,3 +69,7 @@ bash tools/vla-metal/Status-VLA.command
 bash tools/vla-metal/Stop-VLA.command
 ```
 Start 可選擇原始資料夾、既有 route URL 或已轉換 manifest，也可直接傳入 route URL。它建立獨立的程序群組、單一工作鎖與日誌；手動停止或偵測到 Jetlink 啟動時，嘗試結束該群組，並確認工作鎖釋放。這不是硬體互鎖，也無法保證 supervisor 被強制殺死或系統故障後的清理。未做 Mac 實機或並行負載驗證，不要在車輛行駛期間執行。正式版與 C4 均不修改。停止命令不會對 Jetlink 發出信號。
+
+### qcamera 壓縮影像相容（實驗）
+
+優先選擇 fcamera.hevc；缺少時改用 qcamera.ts。以 qRoadEncodeIdx 的 frameId 與 timestampEof 精確連接 modelV2，使用實際記錄順序解碼，要求索引無間斷且解碼總影格數一致。仍要求兩秒有效車況；不採用估計時間戳或假資料。輸出 camera_source/camera_quality 區分原始影像與壓縮預覽，兩者結果不可當作同等精度。新增兩項相容性單元測試；實際 Mac 影片解碼及 VLA 推理仍待驗證。若索引無法對應即停止，仍僅離線、停車且拔除 C4。
