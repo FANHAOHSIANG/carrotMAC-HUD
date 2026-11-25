@@ -36,9 +36,10 @@ def choose(manifest, base):
             continue
         files = {f['name']: f for f in segment.get('files', []) if isinstance(f, dict) and 'name' in f}
         log_names = [n for n in LOGS if n in files]
-        if not log_names or 'fcamera.hevc' not in files:
+        camera = next((n for n in ('fcamera.hevc','qcamera.ts') if n in files), None)
+        if not log_names or camera is None:
             continue
-        pair = [files[log_names[0]], files['fcamera.hevc']]
+        pair = [files[log_names[0]], files[camera]]
         for f in pair:
             p = urlsplit(f['url'])
             path = unquote(p.path)
@@ -50,8 +51,8 @@ def choose(manifest, base):
                 raise ValueError('Unexpected route file URL or size')
         candidates.append((index, pair))
     if not candidates:
-        raise ValueError('找不到同時含 rlog 與 fcamera.hevc 的片段。若只有 qcamera，原版 VLA 無法可靠配對；請改用完整紀錄。')
-    return sorted(candidates, key=lambda c: c[0])
+        raise ValueError('找不到同時含 rlog 與 fcamera.hevc 或 qcamera.ts 的片段。')
+    return sorted(candidates, key=lambda c: (c[1][1]['name'] != 'fcamera.hevc', c[0]))
 
 def download(opener, entry, out):
     destination = out / entry['name']
