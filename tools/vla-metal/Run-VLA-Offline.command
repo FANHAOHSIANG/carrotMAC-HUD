@@ -1,11 +1,13 @@
 #!/bin/bash
 set -euo pipefail
-trap 'echo "測試停止：請保留上方錯誤訊息。"; read -r -p "按 Enter 關閉" _ || true' ERR
+trap 'echo "測試停止：請保留上方錯誤訊息。"; if [[ "${CARROT_VLA_SUPERVISED:-0}" != 1 ]]; then read -r -p "按 Enter 關閉" _ || true; fi' ERR
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE="$HOME/Library/Application Support/CarrotMacHUD/VLA-Offline"
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { echo "需要 Apple Silicon Mac"; exit 1; }
 echo "請先退出 Jetlink、HUD，並拔除 C4 USB。"
-read -r -p "確認已離線，按 Enter 繼續（Ctrl-C 取消）" _
+if [[ "${CARROT_VLA_SUPERVISED:-0}" != 1 ]]; then
+  read -r -p "確認已離線，按 Enter 繼續（Ctrl-C 取消）" _
+fi
 if pgrep -x Jetlink >/dev/null; then echo "Jetlink 尚未退出，請退出後重開工具。"; exit 1; fi
 ROUTE_URL="${1:-${CARROT_VLA_ROUTE_URL:-}}"
 if [[ -n "$ROUTE_URL" ]]; then
@@ -73,4 +75,4 @@ echo "開始模型檢查／下載及離線推理（最多 13 張）..."
 mv "$RUN/results.partial.jsonl" "$RUN/results.jsonl"
 echo "完成：$RUN/results.jsonl"
 open -R "$RUN/results.jsonl"
-read -r -p "按 Enter 關閉" _
+if [[ "${CARROT_VLA_SUPERVISED:-0}" != 1 ]]; then read -r -p "按 Enter 關閉" _; fi
