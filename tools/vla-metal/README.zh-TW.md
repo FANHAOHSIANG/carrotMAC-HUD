@@ -18,7 +18,7 @@ Jetlink 頂部選單 VLA → 離線推理測試會開啟 Terminal 的互動工�
 bash tools/vla-metal/Run-VLA-Offline.command
 ```
 
-首次需要網路、Python 3.11+、git、Xcode 命令列工具與 CMake；若缺 CMake，工具會停止並提示安裝。預先準備好本機 C4 行車紀錄；不會登入 C4 或抓取遠端行車紀錄。權重及編譯產物會快取。若 schema 或資料版本不符、沒有有效配對影格、引擎無法編譯，工具會停止，不會用假造位姿或 CPU 回退。原始碼尚未在 Mac 執行驗證。程式啟動與每張樣本前檢查 Jetlink 已退出，不是硬體互鎖；務必手動拔除 C4。
+首次需要網路、Python 3.11+、git、Xcode 命令列工具與 CMake；若缺 CMake，工具會停止並提示安裝。可直接使用公開分享給自己的 Carrot route 網址（網路行車紀錄模式），不登入 C4。工具從 /manifest 找到同段 rlog 與 fcamera.hevc，依清單大小核對下載，預設只下載第一個符合的片段；若只有 qcamera.ts 則停止。也可使用本機紀錄。個人網址由參數或對話框傳入，不寫進 GitHub。權重及編譯產物會快取。若 schema 或資料版本不符、沒有有效配對影格、引擎無法編譯，工具會停止，不會用假造位姿或 CPU 回退。原始碼尚未在 Mac 執行驗證。程式啟動與每張樣本前檢查 Jetlink 已退出，不是硬體互鎖；務必手動拔除 C4。
 
 ## 準備
 
@@ -53,3 +53,7 @@ python replay.py --offline-bench \
 ## 驗證限制
 
 原始碼相容性實驗，不是 Jetlink 即時雙模型支援，也不是可上路版本。單模型 Metal 能否執行、資源佔用、與原版輸出一致性、台灣場景準確率均待實體 Mac 驗證。不在行車中或與主駕駛模型同時執行。不把 VLA 結果用作控車或安全決策。
+
+### 直接使用既有 Carrot 分享網址
+
+從測試分支根目錄執行 `bash tools/vla-metal/Run-VLA-Offline.command 'https://<server>/routes/<vehicle>/<selection>'`，或在互動工具選擇「網路行車紀錄」。全程離線車輛、唯讀下載。尚未在實際分享站與 Mac 驗證。
