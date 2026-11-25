@@ -22,8 +22,8 @@ if [[ "$MODE" == "網路行車紀錄" ]]; then
   fi
   [[ -n "$ROUTE_URL" ]] || exit 0
 elif [[ "$MODE" == "C4 原始紀錄資料夾" ]]; then
-  INPUT="$(osascript -e 'POSIX path of (choose folder with prompt "選擇含 rlog 與 fcamera.hevc 的單段資料夾")')" || exit 0
-  [[ -f "$INPUT/fcamera.hevc" ]] || { echo "找不到 fcamera.hevc"; exit 1; }
+  INPUT="$(osascript -e 'POSIX path of (choose folder with prompt "選擇含 rlog 與 fcamera.hevc 或 qcamera.ts 的單段資料夾")')" || exit 0
+  [[ -f "$INPUT/fcamera.hevc" || -f "$INPUT/qcamera.ts" ]] || { echo "找不到 fcamera.hevc 或 qcamera.ts"; exit 1; }
   [[ -f "$INPUT/rlog" || -f "$INPUT/rlog.zst" || -f "$INPUT/rlog.bz2" ]] || { echo "找不到 rlog"; exit 1; }
 else
   INPUT="$(osascript -e 'POSIX path of (choose file with prompt "選擇 frames.jsonl")')" || exit 0
