@@ -243,6 +243,8 @@ def main():
                 'backend': 'metal', 'device': device, 'vla': 'mjf-su/PhysicalAI-reason-VLA',
                 'weights_revision': REVISION, 'action': decode(words),
                 'inference_ms': round(elapsed, 2)}
+      result['camera_source'] = row.get('camera_source', 'unspecified')
+      result['camera_quality'] = row.get('camera_quality', 'unspecified')
       if 'primary' in row:
         result['primary'] = row['primary']
       print(json.dumps(result, ensure_ascii=False), flush=True)
