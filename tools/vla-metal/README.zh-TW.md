@@ -57,3 +57,15 @@ python replay.py --offline-bench \
 ### 直接使用既有 Carrot 分享網址
 
 從測試分支根目錄執行 `bash tools/vla-metal/Run-VLA-Offline.command 'https://<server>/routes/<vehicle>/<selection>'`，或在互動工具選擇「網路行車紀錄」。全程離線車輛、唯讀下載。尚未在實際分享站與 Mac 驗證。
+
+## 與正式版 Jetlink 分開的 VLA 工具
+
+不用編譯或替換 Jetlink；在已停車、退出 Jetlink/HUD、拔除 C4 USB 後，從 repository 根目錄執行：
+
+```sh
+bash tools/vla-metal/Start-VLA.command
+# 另開 Terminal，查看或停止：
+bash tools/vla-metal/Status-VLA.command
+bash tools/vla-metal/Stop-VLA.command
+```
+Start 可選擇原始資料夾、既有 route URL 或已轉換 manifest，也可直接傳入 route URL。它建立獨立的程序群組、單一工作鎖與日誌；手動停止或偵測到 Jetlink 啟動時，嘗試結束該群組，並確認工作鎖釋放。這不是硬體互鎖，也無法保證 supervisor 被強制殺死或系統故障後的清理。未做 Mac 實機或並行負載驗證，不要在車輛行駛期間執行。正式版與 C4 均不修改。停止命令不會對 Jetlink 發出信號。
