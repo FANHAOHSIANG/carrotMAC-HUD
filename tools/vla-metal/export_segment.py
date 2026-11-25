@@ -29,7 +29,29 @@ def history_at(eof, times, motion):
   return [[(px-x)*c + (py-y)*s, -(px-x)*s + (py-y)*c, math.remainder(yaw-heading, math.tau)] for px,py,yaw in poses]
 
 
-def recorded_pairs(events):
+def qcamera_positions(events):
+  """Loggerd writes each qRoadEncodeIdx only after the corresponding video packet.
+  Use its recorded packet order, not an assumed zero-based encoder segmentId.
+  Reject gaps, duplicate timestamps/IDs and mixed segments.
+  """
+  rows = [m.qRoadEncodeIdx for m in events if m.which() == 'qRoadEncodeIdx']
+  if not rows:
+    raise ValueError('qcamera has no qRoadEncodeIdx records')
+  positions = {}
+  first = rows[0]
+  for position, idx in enumerate(rows):
+    key = (idx.frameId, idx.timestampEof)
+    if (idx.type != 'qcameraH264' or idx.segmentNum != first.segmentNum
+        or idx.segmentId != first.segmentId + position or idx.timestampEof <= 0
+        or (position and (idx.timestampEof <= rows[position-1].timestampEof
+                          or idx.frameId <= rows[position-1].frameId))
+        or key in positions):
+      raise ValueError('qcamera indices are discontinuous or ambiguous')
+    positions[key] = position
+  return positions
+
+
+def recorded_pairs(events, camera='fcamera.hevc', positions=None):
   indexes, primary, motion, times = {}, {}, [], []
   speed = vehicle_down = None
   speed_time = calibration_time = 0
@@ -62,10 +84,13 @@ def recorded_pairs(events):
                all(map(math.isfinite, (rate.x, rate.y, rate.z))))
       times.append(t)
       motion.append((speed, sum(a*b for a,b in zip(vehicle_down,(rate.x,rate.y,rate.z), strict=True))) if valid else None)
-    elif kind == 'roadEncodeIdx' and msg.valid and msg.roadEncodeIdx.type == 'fullHEVC':
-      idx = msg.roadEncodeIdx
+    elif kind == ('qRoadEncodeIdx' if camera == 'qcamera.ts' else 'roadEncodeIdx') and msg.valid:
+      idx = getattr(msg, kind)
+      if idx.type != ('qcameraH264' if camera == 'qcamera.ts' else 'fullHEVC'):
+        continue
       key = (idx.frameId, idx.timestampEof)
-      indexes[key] = None if key in indexes else (idx.segmentNum, idx.segmentId)
+      position = positions[key] if camera == 'qcamera.ts' else idx.segmentId
+      indexes[key] = None if key in indexes else (idx.segmentNum, position)
     elif kind == 'modelV2' and msg.valid:
       m = msg.modelV2
       if m.visionCameraInputs in ('road', 'roadWide') and m.timestampEof > 0:
@@ -84,7 +109,8 @@ def recorded_pairs(events):
     history = history_at(eof, times, motion)
     if history is not None:
       yield indexes[key][1], {'frame_id': frame, 'timestamp_eof_ns': eof, 'timestamp_us': eof//1000,
-                              'egomotion': history, 'primary': primary[key]}
+                              'egomotion': history, 'primary': primary[key], 'camera_source': camera,
+                              'camera_quality': 'compressed_preview' if camera == 'qcamera.ts' else 'original_road'}
       next_eof = eof + 1_000_000_000
 
 
@@ -102,9 +128,9 @@ def segment_samples(directory, schema_root):
   capnp.remove_import_hook()
   log = capnp.load(str(cereal/'log.capnp'), imports=imports)
   logs = [p for p in (directory/'rlog', directory/'rlog.bz2', directory/'rlog.zst') if p.is_file()]
-  video = directory/'fcamera.hevc'
-  if len(logs) != 1 or not video.is_file():
-    raise ValueError('Expected one local segment with its rlog and fcamera.hevc')
+  video = next((directory/name for name in ('fcamera.hevc','qcamera.ts') if (directory/name).is_file()), None)
+  if len(logs) != 1 or video is None:
+    raise ValueError('Expected one local segment with rlog and fcamera.hevc or qcamera.ts')
   with logs[0].open('rb') as source:
     if logs[0].suffix == '.zst':
       with zstandard.ZstdDecompressor().stream_reader(source) as stream:
@@ -114,14 +140,36 @@ def segment_samples(directory, schema_root):
         data = stream.read()
     else:
       data = source.read()
-  kinds = {'liveCalibration', 'carState', 'livePose', 'roadEncodeIdx', 'modelV2'}
+  kinds = {'liveCalibration', 'carState', 'livePose', 'roadEncodeIdx', 'qRoadEncodeIdx', 'modelV2'}
   events = sorted((msg for msg in log.Event.read_multiple_bytes(data) if msg.which() in kinds), key=lambda msg: msg.logMonoTime)
+  positions = qcamera_positions(events) if video.name == 'qcamera.ts' else None
   reader = cv2.VideoCapture(str(video.resolve()))
   index = -1
   try:
     if not reader.isOpened():
       raise ValueError('Cannot open the recorded front camera')
-    for target, row in recorded_pairs(events):
+    if positions is not None:
+      # Decode the complete preview first: TS container frame-count metadata can be wrong.
+      # Reject truncated or missing frames instead of silently pairing the wrong image.
+      wanted = dict(recorded_pairs(events, video.name, positions))
+      if not wanted:
+        raise ValueError('No exact qcamera/modelV2 timestamp pairs with valid recorded motion')
+      captured = []
+      count = 0
+      while True:
+        ok, bgr = reader.read()
+        if not ok:
+          break
+        if count in wanted:
+          captured.append((wanted[count], resize_road(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))))
+        count += 1
+        if count > len(positions):
+          raise ValueError('qcamera decoded more frames than recorded indices')
+      if count != len(positions):
+        raise ValueError(f'qcamera frame count mismatch: decoded {count}, recorded {len(positions)}')
+      yield from captured
+      return
+    for target, row in recorded_pairs(events, video.name):
       if target <= index:
         raise ValueError('Nonmonotonic recorded frame index')
       while index < target:
