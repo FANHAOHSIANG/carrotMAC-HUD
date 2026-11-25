@@ -69,3 +69,16 @@ bash tools/vla-metal/Status-VLA.command
 bash tools/vla-metal/Stop-VLA.command
 ```
 Start 可選擇原始資料夾、既有 route URL 或已轉換 manifest，也可直接傳入 route URL。它建立獨立的程序群組、單一工作鎖與日誌；手動停止或偵測到 Jetlink 啟動時，嘗試結束該群組，並確認工作鎖釋放。這不是硬體互鎖，也無法保證 supervisor 被強制殺死或系統故障後的清理。未做 Mac 實機或並行負載驗證，不要在車輛行駛期間執行。正式版與 C4 均不修改。停止命令不會對 Jetlink 發出信號。
+
+## Jetlink 唯讀即時資料配對（實驗候選）
+
+本分支新增 jetlink_input.py、jetlink_motion.py、jetlink_observer.py。使用既有 Jetlink HUD 的 snapshot.packet，不建立第二條 USB 連線，不回寫主模型、CAN 或車輛控制。ROAD 與 modelV2 必須同影格 ID／曝光時間，且使用真實歷史位姿；快照沒有足夠資料時會拒絕。主模型必須回報 MAC、低於 50 ms、無影格延遲及健康溫度與記憶體。Metal 權重準備沿用離線工具。
+
+先用與融合 C4 完全相符的 schema checkout 驗證資料接口（不啟動 Metal）：
+
+```sh
+python -m unittest discover -s tools/vla-metal -p 'test_*.py' -v
+python tools/vla-metal/jetlink_input.py --capture-only --schema-root /path/to/fusion-checkout
+````
+
+獨立 Metal 觀察程序已加入實驗源碼，只供隔離工作台／回放輸入，不供行車。它只讀快照、每次最多一筆推理、具主模型健康監督、逾時丟棄及三次連續過期停止；Ctrl-C 停止獨立程序，不關閉 Jetlink。需要預先下載並驗證權重、固定 Metal llama-server 和融合 schema。使用 --lab-only 參數；不設定任何自動啟動。沒有實體 Mac 編譯、GPU 並行負載或真實 C4 快照驗證。快照的 10Hz lossy 顯示通道可能缺少精確配對或位姿；不能據此聲稱可用於實際駕駛。估計年齡不含不可測的傳輸延遲。
