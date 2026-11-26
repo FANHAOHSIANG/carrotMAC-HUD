@@ -123,6 +123,7 @@ def main():
     overlays = root / 'overlays/protocol3'
     patches = tuple(overlays / name for name in (
         'carrot-hud-zh-tw.patch', GEAR_PATCH, 'carrot-hud-nav-clock.patch',
+        'carrot-hud-amap-exit.patch',
         'carrot-hud-nav-alerts.patch', 'carrot-hud-alert-placement.patch',
     ))
     state = base / 'update'
