@@ -1,0 +1,56 @@
+name: Render actual HUD documentation gallery
+on:
+  push:
+    branches: [docs/real-hud-gallery-20261126]
+    paths: ['scripts/render_hud_gallery.py','.github/workflows/render-hud-gallery.yml']
+permissions:
+  contents: write
+jobs:
+  gallery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare renderer and dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb xauth libgl1-mesa-dri libglx-mesa0 libgl1 libxrandr2 libxi6 libxcursor1 libxinerama1
+          python -m pip install raylib==5.5.0.4 numpy Pillow
+          git init /tmp/carrot
+          git -C /tmp/carrot fetch --depth 1 https://github.com/ajouatom/openpilot.git a564ce1dc082909b1fdc73b72e64d920336b34d6
+          git -C /tmp/carrot checkout --detach FETCH_HEAD
+          git -C /tmp/carrot apply "$GITHUB_WORKSPACE/v1/carrot-mac-helper.patch"
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,"scripts")
+          from update_hud_locale import apply_hud_patches
+          p=Path.cwd()/"overlays/protocol3"
+          patches=tuple(p/name for name in ("carrot-hud-zh-tw.patch","carrot-hud-gear.patch","carrot-hud-nav-clock.patch","carrot-hud-amap-exit.patch","carrot-hud-nav-alerts.patch","carrot-hud-alert-placement.patch","carrot-hud-readable-nav.patch","carrot-hud-nav-text-route.patch","carrot-hud-mode7-map.patch","carrot-hud-alert-positions.patch","carrot-hud-cluster-speed-limit.patch"))
+          apply_hud_patches(Path("/tmp/carrot"),patches,False)
+          PY
+          python MacVision/install.py /tmp/carrot/openpilot/selfdrive/carrot/cluster
+      - name: Render actual HUD with isolated synthetic data
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          CARROT_HUD_DIR: /tmp/hud-gallery
+        run: |
+          xvfb-run -a -s '-screen 0 1920x480x24' python scripts/render_hud_gallery.py /tmp/carrot docs/images/hud
+          ls -lh docs/images/hud
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-hud-gallery
+          path: docs/images/hud
+      - name: Commit only rendered gallery to documentation branch
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/docs/real-hud-gallery-20261126'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docs/images/hud
+          git commit -m 'Add actual HUD renderer captures with synthetic telemetry'
+          git push origin HEAD:refs/heads/docs/real-hud-gallery-20261126
