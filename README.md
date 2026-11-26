@@ -18,6 +18,24 @@
 - 首次啟用需下載辨識套件及模型；背景辨識可用 `Disable-Mac-Vision-Autostart.command` 停止。完整移除請退出 Jetlink 後執行 `bash MacVision/Start-Mac-Vision.command --remove`。
 - [完整 Mac Vision 操作指南](MacVision/README.md) · [Carrot Bridge 導航／速限／測速來源](https://github.com/FANHAOHSIANG/Carrot-Bridge/blob/main/docs/HUD_zh-TW.md)
 
+### 實際 HUD 畫面與燈號動畫
+
+以下為 main 的實際 HUD renderer（固定 Carrot helper `a564ce1d`，套用 Mac Vision 及導航補丁）離線輸出，使用模擬車況。不是 AI 概念圖、也不是實車拍攝。
+
+**煞車燈：** 紅色上排像素與中央高位煞車燈。
+
+![實際 HUD 煞車燈動畫](docs/images/hud/brake.gif)
+
+**煞車＋雙黃燈：** 紅色煞車燈保持亮起，左右琥珀色方向燈同時閃爍。
+
+![實際 HUD 煞車與雙黃燈動畫](docs/images/hud/hazard-brake.gif)
+
+**物件類別圖示：** ROAD 圖示列（以模擬辨識結果呈現，非真實模型推論）。
+
+![實際 HUD ROAD 類別圖示列](docs/images/hud/object-legend.png)
+
+[左／右方向燈與全部實際 HUD 畫面](docs/HUD_GALLERY_zh-TW.md) · [Carrot Bridge 速限、測速與導航畫面](https://github.com/FANHAOHSIANG/Carrot-Bridge/blob/main/docs/HUD_zh-TW.md)
+
 ## 高德號誌與測速提醒
 
 退出 Jetlink 與 HUD helper，再執行最新原始碼中的 `Update-HUD-Zh-TW.command`，完成後重新開啟 Jetlink。
