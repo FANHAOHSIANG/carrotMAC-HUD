@@ -29,6 +29,17 @@ class ExitTests(unittest.TestCase):
             if mod=="future":a["amapExitInfo"]["deadlineMonoTimeNanos"]=54000000000
             if mod=="invalid_json":a["amapExitInfo"]["fieldsJson"]="{"
             with self.subTest(mod=mod):self.assertEqual(parse_carrot_navi(a,NOW).amap_exit_name,"")
+    def test_heading_fields(self):
+        a=sample()
+        a["amapExitInfo"]["fieldsJson"]=json.dumps({"EXIT_NAME_INFO":"竹北交流道","EXIT_DIRECTION_INFO":"右侧出口","ROUTE_REMAIN_DIS_AUTO":"12.3 km"})
+        n=parse_carrot_navi(a,NOW)
+        self.assertEqual(n.amap_exit_direction,"右側")
+        self.assertEqual(n.amap_route_remaining_text,"12.3 km")
+        expired=fresh_carrot_navi(n,51.0)[0]
+        self.assertEqual((expired.amap_exit_direction,expired.amap_route_remaining_text),("",""))
+        a["amapExitInfo"]["fieldsJson"]=json.dumps({"EXIT_NAME_INFO":"竹北交流道","EXIT_DIRECTION_INFO":2,"ROUTE_REMAIN_DIS_AUTO":"turn now"})
+        n=parse_carrot_navi(a,NOW)
+        self.assertEqual((n.amap_exit_direction,n.amap_route_remaining_text),("",""))
     def test_capnp(self):
         import capnp
         p=root/'openpilot/cereal'
