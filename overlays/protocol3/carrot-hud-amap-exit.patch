@@ -18,31 +18,35 @@ diff --git a/openpilot/cereal/custom.capnp b/openpilot/cereal/custom.capnp
 diff --git a/openpilot/selfdrive/carrot/cluster/cluster_models.py b/openpilot/selfdrive/carrot/cluster/cluster_models.py
 --- a/openpilot/selfdrive/carrot/cluster/cluster_models.py
 +++ b/openpilot/selfdrive/carrot/cluster/cluster_models.py
-@@ -204,5 +204,7 @@
+@@ -204,5 +204,9 @@
      crossroad: NaviCrossroadInfo | None = None
      route: NaviRouteInfo | None = None
 -    status: NaviStatusInfo | None = None
 +    status: NaviStatusInfo | None = None
 +    amap_exit_name: str = ""
 +    amap_exit_deadline_s: float = 0.0
++    amap_exit_direction: str = ""
++    amap_route_remaining_text: str = ""
  
  
 diff --git a/openpilot/selfdrive/carrot/cluster/cluster_navi.py b/openpilot/selfdrive/carrot/cluster/cluster_navi.py
 --- a/openpilot/selfdrive/carrot/cluster/cluster_navi.py
 +++ b/openpilot/selfdrive/carrot/cluster/cluster_navi.py
-@@ -1,5 +1,6 @@
+@@ -1,5 +1,7 @@
  from __future__ import annotations
  
 -import math
 +import json
 +import math
++import re
  import time
  from dataclasses import replace
-@@ -321,5 +322,20 @@
+@@ -321,5 +323,32 @@
              )
  
 -    state = NaviLiveState(
 +    exit_name, exit_deadline = "", 0.0
++    exit_direction, route_remaining = "", ""
 +    exit_info = _get(data, "amapExitInfo")
 +    if status is not None and status.guidance_active and not status.off_route and bool(_get(exit_info, "valid", False)):
 +        deadline = _int(exit_info, "deadlineMonoTimeNanos") / 1e9
@@ -55,12 +59,23 @@ diff --git a/openpilot/selfdrive/carrot/cluster/cluster_navi.py b/openpilot/self
 +                    ord(c) >= 32 and ord(c) != 127 and not 0xd800 <= ord(c) <= 0xdfff for c in candidate
 +                ):
 +                    exit_name, exit_deadline = candidate.strip(), deadline
++                    # Only show explicit provider text; unknown numeric codes are not directions.
++                    direction = fields.get("EXIT_DIRECTION_INFO")
++                    if direction in ("左側", "左侧", "左側出口", "左侧出口"):
++                        exit_direction = "左側"
++                    elif direction in ("右側", "右侧", "右側出口", "右侧出口"):
++                        exit_direction = "右側"
++                    remaining = fields.get("ROUTE_REMAIN_DIS_AUTO")
++                    if isinstance(remaining, str) and len(remaining) <= 24 and re.fullmatch(
++                        r"[0-9]{1,7}(?:\.[0-9]{1,3})?\s*(?:km|m|公里|米|公尺)", remaining.strip(), re.I
++                    ):
++                        route_remaining = remaining.strip()
 +            except (ValueError, TypeError, RecursionError):
 +                pass
 +    state = NaviLiveState(
          generation=max(0, _int(data, "generation")),
          session_id=session_id,
-@@ -345,7 +361,9 @@
+@@ -345,7 +374,11 @@
          crossroad=crossroad,
          route=route,
 -        status=status,
@@ -69,11 +84,13 @@ diff --git a/openpilot/selfdrive/carrot/cluster/cluster_navi.py b/openpilot/self
 +        status=status,
 +        amap_exit_name=exit_name,
 +        amap_exit_deadline_s=exit_deadline,
++        amap_exit_direction=exit_direction,
++        amap_route_remaining_text=route_remaining,
 +    )
 +    return fresh_carrot_navi(state, now)[0]
  
  
-@@ -377,5 +395,9 @@
+@@ -377,5 +410,9 @@
      crossroad = fresh(state.crossroad, LIVE_TTL_S)
      route = fresh(state.route, ROUTE_TTL_S)
 -    status = fresh(state.status, STATUS_TTL_S)
@@ -84,7 +101,7 @@ diff --git a/openpilot/selfdrive/carrot/cluster/cluster_navi.py b/openpilot/self
 +        deadlines.append(state.amap_exit_deadline_s)
  
      if not any((vehicle, current, next_guidance, lane_current, lane_ahead, speed, traffic, crossroad, route, status)):
-@@ -392,5 +414,7 @@
+@@ -392,5 +429,9 @@
          crossroad=crossroad,
          route=route,
 -        status=status,
@@ -93,18 +110,24 @@ diff --git a/openpilot/selfdrive/carrot/cluster/cluster_navi.py b/openpilot/self
 +        status=status,
 +        amap_exit_name=state.amap_exit_name if show_exit else "",
 +        amap_exit_deadline_s=state.amap_exit_deadline_s if show_exit else 0.0,
++        amap_exit_direction=state.amap_exit_direction if show_exit else "",
++        amap_route_remaining_text=state.amap_route_remaining_text if show_exit else "",
 +    )
 +    return effective, min(deadlines, default=math.inf)
 diff --git a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
 --- a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
 +++ b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
-@@ -4566,5 +4566,8 @@
+@@ -4566,5 +4566,12 @@
          current = navi.current if navi is not None else None
          next_guidance = navi.next if navi is not None else None
 -        self._draw_text(self._text("navigation"), x, 14.0, 16.0, theme.muted)
 +        nav_heading = self._text("navigation")
 +        if navi is not None and getattr(navi, "amap_exit_name", "") and 0 < getattr(navi, "amap_exit_deadline_s", 0.0) - time.monotonic() <= 2.0:
 +            nav_heading += " · " + navi.amap_exit_name
++            if navi.amap_exit_direction:
++                nav_heading += " · " + navi.amap_exit_direction
++            if navi.amap_route_remaining_text:
++                nav_heading += " · " + self._text("route") + " " + navi.amap_route_remaining_text
 +        self._draw_text(self._ellipsize_text(nav_heading, 16.0, width), x, 14.0, 16.0, theme.muted)
          if current is not None:
              current_text = current.main_text or current.road_name or current.near_direction
