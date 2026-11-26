@@ -1,0 +1,37 @@
+diff --git a/tools/jetlink/hud.py b/tools/jetlink/hud.py
+--- a/tools/jetlink/hud.py
++++ b/tools/jetlink/hud.py
+@@ -98,12 +98,19 @@
+
+   def update(self, timeout=0):
+     self.updated = dict.fromkeys(self.services, False)
++    self.cluster_speed_limit_kph = 0
+     snapshot = read_snapshot()
+     if snapshot is None:
+       self.valid = dict.fromkeys(self.services, False)
+       self.alive = dict.fromkeys(self.services, False)
+       return
+     received, value = snapshot
++    limit = value.get('cluster_speed_limit_kph')
++    if (type(limit) is int and 5 <= limit <= 125 and limit % 5 == 0 and
++        value['alive'].get('carState') and value['valid'].get('carState')):
++      car_state_age = max(0., value['sent'] - value['received'].get('carState', 0.))
++      if car_state_age + time.monotonic() - received < .5:
++        self.cluster_speed_limit_kph = limit
+     if received == self.last_received:
+       return
+     self.last_received = received
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_live.py b/openpilot/selfdrive/carrot/cluster/cluster_live.py
+--- a/openpilot/selfdrive/carrot/cluster/cluster_live.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_live.py
+@@ -430,6 +430,10 @@
+             state.speed_limit_source,
+             navi_live,
+         )
++
++        cluster_limit = getattr(self.sm, "cluster_speed_limit_kph", 0)
++        if cluster_limit and speed_limit_source != "v":
++            speed_limit_kph, speed_limit_source = cluster_limit, "v"
+
+         cruise_override_kph = None
+         cruise_override_label = None

@@ -1,0 +1,299 @@
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+index db5ace7..346e95b 100644
+--- a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+@@ -8,6 +8,8 @@ from functools import lru_cache
+ import base64
+ import math
+ import os
++import re
++import struct
+ import time
+ from pathlib import Path
+ 
+@@ -4468,15 +4470,21 @@ class ClusterUiRenderer:
+         map_rect = rl.Rectangle(NAVI_MODE_MAP_X, 0.0, NAVI_MODE_MAP_W, DESIGN_HEIGHT)
+         map_frame = media.get("render:map_main")
+         rl.draw_rectangle_rec(map_rect, rl_color(NAVI_MAP_BACKGROUND))
+-        if not self._draw_navi_media(map_frame, map_rect, cover=False):
++        stalled = dashboard is not None and dashboard.map_stream_stalled
++        if stalled or not self._draw_navi_media(map_frame, map_rect, cover=False):
+             self._draw_navi_route_fallback(navi, map_rect)
+-        if dashboard is not None and dashboard.map_stream_stalled:
+-            self._draw_navi_map_stalled(map_rect, dashboard.map_frame_age_ms)
+ 
+         self._draw_navi_map_media(media, navi)
+         self._draw_navi_left_band(state, navi, media)
+         self._draw_navi_right_band(navi, dashboard, media)
+ 
++    @staticmethod
++    def _readable_navi_text(*values: str) -> str:
++        for value in values:
++            if value and not re.search(r"[?？]{2,}|\ufffd", value):
++                return value
++        return ""
++
+     def _draw_navi_left_band(
+         self,
+         state: ClusterUiState,
+@@ -4495,7 +4503,7 @@ class ClusterUiRenderer:
+         if current is not None and not (drew_full or drew_compact):
+             self._draw_navi_turn_icon(current.turn_type, 72.0, 78.0, 92.0)
+             self._draw_text(self._format_navi_distance(current.distance_m), 136.0, 30.0, 42.0, theme.text)
+-            current_text = current.main_text or current.road_name or current.near_direction
++            current_text = self._readable_navi_text(current.main_text, current.road_name, current.near_direction)
+             self._draw_text(
+                 self._ellipsize_text(current_text, 26.0, 350.0),
+                 136.0,
+@@ -4519,7 +4527,7 @@ class ClusterUiRenderer:
+         road_name = ""
+         if navi is not None:
+             if navi.vehicle is not None:
+-                road_name = navi.vehicle.road_name
++                road_name = self._readable_navi_text(navi.vehicle.road_name)
+             if road_limit is None and navi.speed is not None:
+                 road_limit = navi.speed.road_limit_kph
+         self._draw_text(f"{displayed_speed:.0f}", 32.0, 284.0, 82.0, theme.text)
+@@ -4598,14 +4606,14 @@ class ClusterUiRenderer:
+         next_guidance = navi.next if navi is not None else None
+         nav_heading = self._text("navigation")
+         if navi is not None and getattr(navi, "amap_exit_name", "") and 0 < getattr(navi, "amap_exit_deadline_s", 0.0) - time.monotonic() <= 2.0:
+             nav_heading += " · " + navi.amap_exit_name
+             if navi.amap_exit_direction:
+                 nav_heading += " · " + navi.amap_exit_direction
+             if navi.amap_route_remaining_text:
+                 nav_heading += " · " + self._text("route") + " " + navi.amap_route_remaining_text
+         self._draw_text(self._ellipsize_text(nav_heading, 16.0, width), x, 14.0, 16.0, theme.muted)
+         if current is not None:
+-            current_text = current.main_text or current.road_name or current.near_direction
++            current_text = self._readable_navi_text(current.main_text, current.road_name, current.near_direction)
+             self._draw_text(
+                 self._ellipsize_text(current_text, 27.0, width - 120.0),
+                 x,
+@@ -4615,7 +4623,7 @@ class ClusterUiRenderer:
+                 anchor="right",
+             )
+         if next_guidance is not None:
+-            next_text = next_guidance.main_text or next_guidance.road_name or next_guidance.near_direction
++            next_text = self._readable_navi_text(next_guidance.main_text, next_guidance.road_name, next_guidance.near_direction)
+             next_line = f"{self._text('next')} {self._format_navi_distance(next_guidance.distance_m)}  {next_text}"
+             self._draw_text(self._ellipsize_text(next_line, 18.0, width), x, 82.0, 18.0, theme.muted)
+ 
+@@ -4708,43 +4716,92 @@ class ClusterUiRenderer:
+         if dashboard.error:
+             self._draw_text(self._ellipsize_text(dashboard.error, 13.0, width), x, 436.0, 13.0, RED)
+ 
++    @staticmethod
++    def _local_route_preview(points, vehicle):
++        """Return heading-up geometry near the vehicle, or a distant overview."""
++        lat, lon = points[0]
++        east_scale = 111320.0 * max(0.01, math.cos(math.radians(lat)))
++
++        def meters(point):
++            return (point[1] - lon) * east_scale, (point[0] - lat) * 111320.0
++
++        xy = tuple(meters(point) for point in points)
++        if vehicle is None or not all(math.isfinite(v) for v in (vehicle.latitude, vehicle.longitude)):
++            return xy, None
++        car_x, car_y = meters((vehicle.latitude, vehicle.longitude))
++        heading = vehicle.heading_deg
++        bearing = math.radians(heading) if math.isfinite(heading) and 0 <= heading < 360 else None
++        best = None
++        for i, ((ax, ay), (bx, by)) in enumerate(zip(xy, xy[1:])):
++            dx, dy = bx - ax, by - ay
++            length = math.hypot(dx, dy)
++            if length < 0.5:
++                continue
++            if bearing is not None and (dx * math.sin(bearing) + dy * math.cos(bearing)) / length < 0:
++                continue
++            fraction = min(1.0, max(0.0, ((car_x - ax) * dx + (car_y - ay) * dy) / length**2))
++            px, py = ax + fraction * dx, ay + fraction * dy
++            distance = math.hypot(px - car_x, py - car_y)
++            if best is None or distance < best[0]:
++                best = distance, i, px, py, dx / length, dy / length
++        if best is None or best[0] > 65.0:
++            return xy, None
++
++        _, segment, px, py, forward_x, forward_y = best
++        if bearing is not None:
++            forward_x, forward_y = math.sin(bearing), math.cos(bearing)
++        ahead = [(px, py)]
++        remaining = 1800.0
++        for bx, by in xy[segment + 1:]:
++            ax, ay = ahead[-1]
++            length = math.hypot(bx - ax, by - ay)
++            if length > remaining:
++                ahead.append((ax + (bx - ax) * remaining / length, ay + (by - ay) * remaining / length))
++                break
++            ahead.append((bx, by))
++            remaining -= length
++        return tuple(((x - car_x) * forward_y - (y - car_y) * forward_x,
++                      (x - car_x) * forward_x + (y - car_y) * forward_y) for x, y in ahead), (0.0, 0.0)
++
+     def _draw_navi_route_fallback(self, navi: NaviLiveState | None, rect: rl.Rectangle) -> None:
+         theme = self._current_theme()
+         rl.draw_rectangle_rec(rect, rl_color((9, 13, 18)))
+-        route = navi.route if navi is not None else None
++        off_route = navi is not None and navi.status is not None and navi.status.off_route
++        route = navi.route if navi is not None and not off_route else None
+         points = route.polyline if route is not None else ()
+-        if len(points) >= 2:
+-            latitudes = [point[0] for point in points]
+-            longitudes = [point[1] for point in points]
+-            min_lat, max_lat = min(latitudes), max(latitudes)
+-            min_lon, max_lon = min(longitudes), max(longitudes)
+-            lon_factor = max(0.01, math.cos(math.radians((min_lat + max_lat) * 0.5)))
+-            scale = min((rect.width - 84.0) / max(0.00001, (max_lon - min_lon) * lon_factor),
+-                        (rect.height - 148.0) / max(0.00001, max_lat - min_lat))
+-            mid_lat, mid_lon = (min_lat + max_lat) * 0.5, (min_lon + max_lon) * 0.5
+-
+-            def project(latitude: float, longitude: float) -> rl.Vector2:
+-                px = rect.x + rect.width * 0.5 + (longitude - mid_lon) * lon_factor * scale
+-                py = rect.y + rect.height * 0.5 + 24.0 - (latitude - mid_lat) * scale
+-                return rl.Vector2(px, py)
+-
+-            previous = project(*points[0])
+-            for point in points[1:]:
+-                current = project(*point)
+-                rl.draw_line_ex(previous, current, 10.0, rl_color((19, 61, 88)))
+-                rl.draw_line_ex(previous, current, 5.0, rl_color((83, 219, 252)))
+-                previous = current
+-            if navi is not None and navi.vehicle is not None:
+-                vehicle = project(navi.vehicle.latitude, navi.vehicle.longitude)
+-                if (rect.x + 12.0 <= vehicle.x <= rect.x + rect.width - 12.0 and
+-                        rect.y + 94.0 <= vehicle.y <= rect.y + rect.height - 12.0):
+-                    rl.draw_circle_v(vehicle, 11.0, rl_color(WHITE))
+-                    rl.draw_circle_v(vehicle, 7.0, rl_color(BLUE))
+-            self._draw_text("ROUTE OVERVIEW", rect.x + rect.width * 0.5, rect.y + rect.height - 28.0,
+-                            18.0, BLUE_SOFT, anchor="center")
+-        else:
+-            self._draw_text("MAP STREAM WAITING", rect.x + rect.width * 0.5, rect.y + rect.height * 0.5,
++        traditional = self.language == CLUSTER_LANGUAGE_ZH_TW
++        if len(points) < 2:
++            self._draw_text("等待地圖或路線" if traditional else "WAITING FOR MAP OR ROUTE",
++                            rect.x + rect.width * 0.5, rect.y + rect.height * 0.5,
+                             18.0, theme.muted, anchor="center")
++            return
++        geometry, vehicle = self._local_route_preview(points, navi.vehicle)
++        bounds = (*geometry, vehicle) if vehicle is not None else geometry
++        xs, ys = zip(*bounds)
++        mid_x, mid_y = (min(xs) + max(xs)) * 0.5, (min(ys) + max(ys)) * 0.5
++        scale = min((rect.width - 84.0) / max(100.0, max(xs) - min(xs)),
++                    (rect.height - 148.0) / max(100.0, max(ys) - min(ys)))
++
++        def project(x, y):
++            return rl.Vector2(rect.x + rect.width * 0.5 + (x - mid_x) * scale,
++                              rect.y + rect.height * 0.5 + 24.0 - (y - mid_y) * scale)
++
++        previous = project(*geometry[0])
++        for point in geometry[1:]:
++            current = project(*point)
++            rl.draw_line_ex(previous, current, 10.0, rl_color((19, 61, 88)))
++            rl.draw_line_ex(previous, current, 5.0, rl_color((83, 219, 252)))
++            previous = current
++        if vehicle is not None:
++            marker = project(*vehicle)
++            rl.draw_circle_v(marker, 11.0, rl_color(WHITE))
++            rl.draw_circle_v(marker, 7.0, rl_color(BLUE))
++        if traditional:
++            title = "前方路線（無底圖）" if vehicle is not None else "路線總覽（無底圖）"
++        else:
++            title = "ROUTE AHEAD · NO BASEMAP" if vehicle is not None else "ROUTE OVERVIEW · NO BASEMAP"
++        self._draw_text(title, rect.x + rect.width * 0.5, rect.y + rect.height - 28.0,
++                        18.0, BLUE_SOFT, anchor="center")
+ 
+     def _draw_navi_media(
+         self,
+@@ -5386,7 +5443,7 @@ class ClusterUiRenderer:
+                     2,
+                 )
+ 
+-            road_name = navi.vehicle.road_name if navi is not None and navi.vehicle is not None else ""
++            road_name = self._readable_navi_text(navi.vehicle.road_name) if navi is not None and navi.vehicle is not None else ""
+             right_x = x + w - 14.0
+             right_width = right_x - lane_right - 14.0
+             if road_name and right_width >= 70.0:
+@@ -5411,7 +5468,7 @@ class ClusterUiRenderer:
+             self._draw_navi_turn_icon(current.turn_type, x + 72.0, NAVI_LIVE_ICON_Y, NAVI_LIVE_ICON_SIZE)
+             distance_text = self._format_navi_distance(current.distance_m)
+             self._draw_text(distance_text, x + 136.0, y + 26.0, 38.0, theme.text)
+-            main_text = current.main_text or current.road_name or current.near_direction
++            main_text = self._readable_navi_text(current.main_text, current.road_name, current.near_direction)
+             self._draw_text(
+                 self._ellipsize_text(main_text, 25.0, NAVI_LIVE_CONTENT_W),
+                 x + 136.0,
+@@ -5448,7 +5505,7 @@ class ClusterUiRenderer:
+                 24.0,
+                 theme.text,
+             )
+-            next_text = next_guidance.main_text or next_guidance.road_name or next_guidance.near_direction
++            next_text = self._readable_navi_text(next_guidance.main_text, next_guidance.road_name, next_guidance.near_direction)
+             self._draw_text(
+                 self._ellipsize_text(next_text, 18.0, w - 180.0),
+                 x + 180.0,
+@@ -7742,21 +7799,61 @@ class ClusterUiRenderer:
+             draw_y = y - text_height * 0.5
+         rl.draw_text_ex(font, text, rl.Vector2(draw_x, draw_y), size, spacing, rl_color(color))
+ 
++    @staticmethod
++    @lru_cache(maxsize=2)
++    def _standalone_mac_font(path: Path) -> bytes:
++        """Copy the first face of a macOS collection into a standalone SFNT."""
++        data = path.read_bytes()
++        if data[:4] != b"ttcf":
++            return data
++        face = struct.unpack_from(">I", data, 12)[0]
++        count = struct.unpack_from(">H", data, face + 4)[0]
++        header_end = face + 12 + 16 * count
++        if not 0 < count <= 256 or header_end > len(data):
++            raise ValueError("Invalid macOS font table directory")
++        result = bytearray(data[face:header_end])
++        for index in range(count):
++            entry = 12 + 16 * index
++            offset, length = struct.unpack_from(">II", result, entry + 8)
++            if offset + length > len(data):
++                raise ValueError("Invalid macOS font table")
++            struct.pack_into(">I", result, entry + 8, len(result))
++            result.extend(memoryview(data)[offset:offset + length])
++            result.extend(b"\0" * (-len(result) % 4))
++        return bytes(result)
++
+     def _font_for_text(self, text: str):
+         if any(0x3400 <= ord(c) <= 0x9FFF for c in text):
+             known = self._known_font_codepoints
+-            if any(0x3400 <= ord(c) <= 0x9FFF and ord(c) not in known for c in text):
++            if self.language == CLUSTER_LANGUAGE_ZH_TW or any(0x3400 <= ord(c) <= 0x9FFF and ord(c) not in known for c in text):
+                 key = tuple(sorted(set(map(ord, text))))
+                 cache = self._cjk_fonts
++                needed = set(key)
++                for glyphs, font in cache.items():
++                    if needed.issubset(glyphs):
++                        return font
++                candidates = [
++                    Path("/System/Library/Fonts/PingFang.ttc"),
++                    Path("/System/Library/AssetsV2/com_apple_MobileAsset_Font7"),
++                    Path("/System/Library/Fonts/Supplemental/Songti.ttc"),
++                ]
+                 if key not in cache:
+-                    for candidate in self._font_candidates():
++                    candidates[1:2] = sorted(candidates[1].glob("*.asset/AssetData/PingFang.ttc"))[:2]
++                    for candidate in (*candidates, *self._font_candidates()):
+                         if not candidate.exists():
+                             continue
+                         try:
+-                            font = rl.load_font_ex(str(candidate), KOREAN_FONT_BASE_SIZE, rl.ffi.new("int[]", key), len(key))
++                            glyphs = rl.ffi.new("int[]", key)
++                            if candidate.suffix == ".ttc":
++                                data = self._standalone_mac_font(candidate)
++                                font = rl.load_font_from_memory(".otf" if data[:4] == b"OTTO" else ".ttf",
++                                                                rl.ffi.from_buffer(data), len(data),
++                                                                KOREAN_FONT_BASE_SIZE, glyphs, len(key))
++                            else:
++                                font = rl.load_font_ex(str(candidate), KOREAN_FONT_BASE_SIZE, glyphs, len(key))
+                         except Exception:
+                             continue
+-                        if font.texture.id > 0:
++                        if font.texture.id > 0 and font.texture.id != rl.get_font_default().texture.id:
+                             rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+                             if len(cache) >= 16:
+                                 old_font = cache.pop(next(iter(cache)))

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from update_hud_locale import GEAR_PATCH, RENDERER, apply_hud_patches
+from update_hud_locale import CLUSTER_LIMIT_PATCH, GEAR_PATCH, RENDERER, apply_hud_patches
 
 
 class HudDisplayUpdateTests(unittest.TestCase):
@@ -44,6 +44,24 @@ class HudDisplayUpdateTests(unittest.TestCase):
         self.assertTrue(apply_hud_patches(self.repo, self.patches, False))
         self.assertIn('language = "zh-TW"', self.renderer.read_text())
         self.assertIn('gear_screen = True', self.renderer.read_text())
+
+    def test_adds_cluster_limit_to_an_installed_layout(self):
+        layout = self.gear.with_name('carrot-hud-alert-positions.patch')
+        layout.write_text(self.gear.read_text())
+        receiver = self.repo / 'receiver.py'
+        receiver.write_text('limit = 0\n')
+        limit = self.gear.with_name(CLUSTER_LIMIT_PATCH)
+        limit.write_text(''.join(unified_diff(
+            ['limit = 0\n'], ['limit = 60\n'], 'a/receiver.py', 'b/receiver.py',
+        )))
+        base = (self.locale, layout)
+        self.assertTrue(apply_hud_patches(self.repo, base, False))
+        self.assertTrue(apply_hud_patches(self.repo, (*base, limit), False))
+        self.assertFalse(apply_hud_patches(self.repo, (*base, limit), False))
+        self.assertEqual(receiver.read_text(), 'limit = 60\n')
+        self.assertTrue(apply_hud_patches(self.repo, (*base, limit), True))
+        self.assertEqual(receiver.read_text(), 'limit = 0\n')
+        self.assertEqual(self.renderer.read_text(), self.base)
 
     def test_conflict_leaves_other_patch_unapplied(self):
         local = self.base.replace('gear_screen = False', 'gear_screen = "custom"')

@@ -1,0 +1,122 @@
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_config.py b/openpilot/selfdrive/carrot/cluster/cluster_config.py
+index 7fd2d68..f58ac54 100644
+--- a/openpilot/selfdrive/carrot/cluster/cluster_config.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_config.py
+@@ -82,6 +82,7 @@ CLUSTER_SCREEN_MODE_DEBUG_GRAPH = 3
+ CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT = 4
+ CLUSTER_SCREEN_MODE_TRIP_REPORT = 5
+ CLUSTER_SCREEN_MODE_NAVI = 6
++CLUSTER_SCREEN_MODE_MAP_CARD = 7
+ CLUSTER_SCREEN_MODE_PARAM = "ClusterHudScreenMode"
+ CLUSTER_RADAR_INFO_NONE = 0
+ CLUSTER_RADAR_INFO_VEHICLE_SPEED = 1
+@@ -412,6 +413,7 @@ def normalize_cluster_screen_mode(value: object) -> int:
+         CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
+         CLUSTER_SCREEN_MODE_TRIP_REPORT,
+         CLUSTER_SCREEN_MODE_NAVI,
++        CLUSTER_SCREEN_MODE_MAP_CARD,
+     ):
+         return mode
+     return CLUSTER_SCREEN_MODE_DEFAULT
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+index 346e95b..1b158a8 100644
+--- a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+@@ -52,6 +52,7 @@ from cluster_config import (
+     CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
+     CLUSTER_SCREEN_MODE_FULLSCREEN_3D,
+     CLUSTER_SCREEN_MODE_NAVI,
++    CLUSTER_SCREEN_MODE_MAP_CARD,
+     CLUSTER_SCREEN_MODE_TRIP_REPORT,
+     CLUSTER_SCREEN_MODE_DEFAULT,
+     CLUSTER_SCREEN_MODE_DEBUG_SYSTEM,
+@@ -3120,6 +3121,7 @@ class ClusterUiRenderer:
+         if cluster_camera_view_is_road_camera(state.camera_view_mode):
+             return 0.0
+         if screen_mode in (
++            CLUSTER_SCREEN_MODE_MAP_CARD,
+             CLUSTER_SCREEN_MODE_DEBUG,
+             CLUSTER_SCREEN_MODE_DEBUG_SYSTEM,
+             CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
+@@ -3854,6 +3856,11 @@ class ClusterUiRenderer:
+         self._profile_add("hud.push_scale", profile_stage)
+         screen_mode = self._effective_screen_mode(state)
+         try:
++            if screen_mode == CLUSTER_SCREEN_MODE_MAP_CARD:
++                self._draw_driving_hud_content(state, screen_mode, left_signal_lit, right_signal_lit)
++                self._draw_mode7_map_card(state)
++                self._draw_status_footer(state)
++                return
+             if screen_mode == CLUSTER_SCREEN_MODE_NAVI:
+                 self._draw_navi_dashboard(state)
+                 self._draw_status_footer(state)
+@@ -4441,6 +4448,56 @@ class ClusterUiRenderer:
+         label_y = clamp(latest.y + (24.0 if series_index > 0 else 0.0), plot_y + 12.0, plot_y + plot_h - 12.0)
+         self._draw_text(label, label_x, label_y, label_size, color, anchor="right")
+ 
++    def _draw_mode7_map_card(self, state: ClusterUiState) -> None:
++        theme = self._current_theme()
++        x = self._information_panel_x(NAVI_LIVE_PANEL_X) + 12.0
++        width = NAVI_LIVE_PANEL_W - 24.0
++        self._rounded_rect(x, 12.0, width, DESIGN_HEIGHT - 30.0, 14.0,
++                           theme.panel_bg, theme.faint, 2.0)
++        navi = state.navi_live
++        if navi is not None and navi.status is not None and navi.status.off_route:
++            navi = None
++        guidance = navi.current if navi is not None else None
++        map_rect = rl.Rectangle(x + 16.0, 94.0, width - 32.0, DESIGN_HEIGHT - 132.0)
++        title = self._draw_navigation_map_content(state.navi_live, state.navi_dashboard, map_rect)
++        self._draw_text(title, x + 20.0, 22.0, 18.0, BLUE_SOFT)
++        if guidance is not None:
++            wording = self._readable_navi_text(guidance.main_text, guidance.road_name, guidance.near_direction)
++            self._draw_text(self._ellipsize_text(wording, 24.0, width - 240.0),
++                            x + 20.0, 51.0, 24.0, theme.text)
++            self._draw_text(self._format_navi_distance(guidance.distance_m),
++                            x + width - 22.0, 58.0, 30.0, theme.text, anchor="right")
++
++    def _draw_navigation_map_content(self, navi, dashboard, rect) -> str:
++        theme = self._current_theme()
++        traditional = self.language == CLUSTER_LANGUAGE_ZH_TW
++        off_route = navi is not None and navi.status is not None and navi.status.off_route
++        if off_route:
++            navi = None
++        rl.draw_rectangle_rec(rect, rl_color((9, 13, 18)))
++        if not off_route and dashboard is not None and dashboard.connected and not dashboard.map_stream_stalled:
++            frame = next((item for item in dashboard.media
++                          if item.key == "render:map_main" and item.present), None)
++            if frame is not None and self._draw_navi_media(frame, rect, cover=False):
++                return "即時地圖" if traditional else "LIVE MAP"
++        if navi is not None and navi.route is not None and len(navi.route.polyline) >= 2:
++            self._draw_navi_route_fallback(navi, rect)
++            return "導航路線" if traditional else "NAV ROUTE"
++
++        center_x = rect.x + rect.width * 0.5
++        guidance = navi.current if navi is not None else None
++        if guidance is not None:
++            self._draw_navi_turn_icon(guidance.turn_type, center_x, rect.y + rect.height * 0.40, 104.0)
++            prompt = self._format_navi_distance(guidance.distance_m)
++            self._draw_text(prompt, center_x, rect.y + rect.height * 0.64, 46.0, theme.text, anchor="center")
++            message = "只收到轉彎指引" if traditional else "TURN GUIDANCE ONLY"
++            message_y = rect.y + rect.height * 0.85
++        else:
++            message = "等待導航資料" if traditional else "WAITING FOR NAVIGATION"
++            message_y = rect.y + rect.height * 0.5
++        self._draw_text(message, center_x, message_y, 24.0, theme.muted, anchor="center")
++        return "導航指引" if traditional else "GUIDANCE"
++
+     def _draw_navi_dashboard(self, state: ClusterUiState) -> None:
+         theme = self._current_theme()
+         dashboard = state.navi_dashboard
+@@ -4468,11 +4525,7 @@ class ClusterUiRenderer:
+ 
+         media = {frame.key: frame for frame in dashboard.media} if dashboard is not None else {}
+         map_rect = rl.Rectangle(NAVI_MODE_MAP_X, 0.0, NAVI_MODE_MAP_W, DESIGN_HEIGHT)
+-        map_frame = media.get("render:map_main")
+-        rl.draw_rectangle_rec(map_rect, rl_color(NAVI_MAP_BACKGROUND))
+-        stalled = dashboard is not None and dashboard.map_stream_stalled
+-        if stalled or not self._draw_navi_media(map_frame, map_rect, cover=False):
+-            self._draw_navi_route_fallback(navi, map_rect)
++        self._draw_navigation_map_content(navi, dashboard, map_rect)
+ 
+         self._draw_navi_map_media(media, navi)
+         self._draw_navi_left_band(state, navi, media)

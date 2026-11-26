@@ -8,6 +8,16 @@
 
 **Mac mini 實機驗證（2026-11-15）**　Jetlink `0.9.0` 可完成更新，HUD 運作正常。此版修正既有 HUD 自訂造成的 P／R 補丁安裝失敗。[修正提交](https://github.com/FANHAOHSIANG/carrotMAC-HUD/commit/58dce3d1678438e451b95c1220f84813670a5c49)
 
+## IONIQ 5 車尾燈與 Mac Vision（main 新增，選用）
+
+從 [main ZIP](https://github.com/FANHAOHSIANG/carrotMAC-HUD/archive/refs/heads/main.zip) 解壓縮，停車並退出 Jetlink／HUD helper，執行 `Start-IONIQ5-HUD.command`。原有 stable 實車驗收版下載入口不變。此功能沿用測試分支 `025d3a5e`，已合併原始碼，仍需依 Mac／C4／TURZX 實機驗收；不替換車控模型。
+
+- IONIQ 5 三種自車外觀、煞車燈、左／右方向燈及雙黃燈，可同時顯示煞車與轉向。
+- `Configure-HUD.command` 選擇車模、懸浮方向箭頭與速限圓牌；尾燈讀取有效車況，不依賴物件辨識。
+- Mac Vision 顯示行人、機車、自行車、汽車、公車、卡車、三角錐與斑馬線；需 ROAD 影像與相機校正，可能漏判或誤判，僅供顯示。
+- 首次啟用需下載辨識套件及模型；背景辨識可用 `Disable-Mac-Vision-Autostart.command` 停止。完整移除請退出 Jetlink 後執行 `bash MacVision/Start-Mac-Vision.command --remove`。
+- [完整 Mac Vision 操作指南](MacVision/README.md) · [Carrot Bridge 導航／速限／測速來源](https://github.com/FANHAOHSIANG/Carrot-Bridge/blob/main/docs/HUD_zh-TW.md)
+
 ## 高德號誌與測速提醒
 
 退出 Jetlink 與 HUD helper，再執行最新原始碼中的 `Update-HUD-Zh-TW.command`，完成後重新開啟 Jetlink。
