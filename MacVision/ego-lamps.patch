@@ -1,0 +1,61 @@
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_live.py b/openpilot/selfdrive/carrot/cluster/cluster_live.py
+index 8fd54be..96cbb5a 100644
+--- a/openpilot/selfdrive/carrot/cluster/cluster_live.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_live.py
+@@ -461,2 +461,4 @@ class OpenpilotLiveSource:
+             onroad=onroad,
++            live_brake_lamps=(bool(safe_get(car_state, "brakeLights", False))
++                              if self._service_alive("carState") and self._service_valid("carState") else None),
+             alert=self._live_cluster_alert(state.alert, onroad),
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_models.py b/openpilot/selfdrive/carrot/cluster/cluster_models.py
+index 0f7673c..5a6d86d 100644
+--- a/openpilot/selfdrive/carrot/cluster/cluster_models.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_models.py
+@@ -395,2 +395,3 @@ class ClusterUiState:
+     onroad: bool = False
++    live_brake_lamps: bool | None = None
+     active_lane_line: bool | None = None
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+index a8c24b7..3a1b466 100644
+--- a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+@@ -1584,3 +1584,3 @@ class ClusterUiRenderer:
+             profile_stage = self._profile_start()
+-            self._draw_scene(scene, state)
++            self._draw_scene(scene, state, signal_lights)
+             self._profile_add("render_world.draw_scene", profile_stage)
+@@ -3012,3 +3012,3 @@ class ClusterUiRenderer:
+ 
+-    def _draw_scene(self, scene: ClusterScene, state: ClusterUiState) -> None:
++    def _draw_scene(self, scene: ClusterScene, state: ClusterUiState, signal_lights: tuple[bool, bool]) -> None:
+         camera = rl.Camera3D(
+@@ -3057,2 +3057,8 @@ class ClusterUiRenderer:
+                 self._draw_vehicle(vehicle)
++            # The non-camera 3D scene places the host vehicle first.
++            if scene.vehicles and state.live_brake_lamps is not None:
++                brake = state.live_brake_lamps
++                left, right = signal_lights
++                if brake or left or right:
++                    self._draw_ego_lamps(scene.vehicles[0], brake, left, right)
+             self._profile_add("draw_scene.vehicles", profile_stage)
+@@ -3525,2 +3531,20 @@ class ClusterUiRenderer:
+ 
++    @staticmethod
++    def _draw_ego_lamps(vehicle: VehicleBox, brake: bool, left: bool, right: bool) -> None:
++        rear_x = vehicle.center.x - vehicle.forward_x * vehicle.length_m * 0.51
++        rear_y = vehicle.center.y - vehicle.forward_y * vehicle.length_m * 0.51
++        rl.rl_push_matrix()
++        try:
++            rl.rl_translatef(rear_x, rear_y, vehicle.center.z)
++            rl.rl_rotatef(math.degrees(math.atan2(-vehicle.forward_x, vehicle.forward_y)), 0.0, 0.0, 1.0)
++            for side, indicator in ((-1, left), (1, right)):
++                if brake:
++                    rl.draw_cube(rl.Vector3(side * vehicle.width_m * 0.32, 0.0, 0.0),
++                                 vehicle.width_m * 0.21, 0.08, 0.10, rl_color((255, 38, 36)))
++                if indicator:
++                    rl.draw_cube(rl.Vector3(side * vehicle.width_m * 0.43, 0.0, 0.12),
++                                 vehicle.width_m * 0.13, 0.08, 0.10, rl_color((255, 177, 26)))
++        finally:
++            rl.rl_pop_matrix()
++
+     def _draw_vehicle_model(self, vehicle: VehicleBox) -> None:
