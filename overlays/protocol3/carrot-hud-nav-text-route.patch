@@ -54,8 +54,15 @@ index db5ace7..346e95b 100644
              if road_limit is None and navi.speed is not None:
                  road_limit = navi.speed.road_limit_kph
          self._draw_text(f"{displayed_speed:.0f}", 32.0, 284.0, 82.0, theme.text)
-@@ -4598,7 +4606,7 @@ class ClusterUiRenderer:
+@@ -4598,14 +4606,14 @@ class ClusterUiRenderer:
          next_guidance = navi.next if navi is not None else None
+         nav_heading = self._text("navigation")
+         if navi is not None and getattr(navi, "amap_exit_name", "") and 0 < getattr(navi, "amap_exit_deadline_s", 0.0) - time.monotonic() <= 2.0:
+             nav_heading += " · " + navi.amap_exit_name
+             if navi.amap_exit_direction:
+                 nav_heading += " · " + navi.amap_exit_direction
+             if navi.amap_route_remaining_text:
+                 nav_heading += " · " + self._text("route") + " " + navi.amap_route_remaining_text
          self._draw_text(self._ellipsize_text(nav_heading, 16.0, width), x, 14.0, 16.0, theme.muted)
          if current is not None:
 -            current_text = current.main_text or current.road_name or current.near_direction
