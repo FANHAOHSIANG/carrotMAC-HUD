@@ -1,0 +1,129 @@
+diff --git a/openpilot/cereal/custom.capnp b/openpilot/cereal/custom.capnp
+--- a/openpilot/cereal/custom.capnp
++++ b/openpilot/cereal/custom.capnp
+@@ -63,5 +63,12 @@
+ 	crossroad @12 :Crossroad;
+ 	route @13 :Route;
+-	navigationStatus @14 :NavigationStatus;
++	navigationStatus @14 :NavigationStatus;
++	amapExitInfo @15 :AmapExitInfo;
++
++	struct AmapExitInfo {
++		valid @0 :Bool;
++		deadlineMonoTimeNanos @1 :UInt64;
++		fieldsJson @2 :Text;
++	}
+ 
+ 	struct ItemMeta {
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_models.py b/openpilot/selfdrive/carrot/cluster/cluster_models.py
+--- a/openpilot/selfdrive/carrot/cluster/cluster_models.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_models.py
+@@ -204,5 +204,7 @@
+     crossroad: NaviCrossroadInfo | None = None
+     route: NaviRouteInfo | None = None
+-    status: NaviStatusInfo | None = None
++    status: NaviStatusInfo | None = None
++    amap_exit_name: str = ""
++    amap_exit_deadline_s: float = 0.0
+ 
+ 
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_navi.py b/openpilot/selfdrive/carrot/cluster/cluster_navi.py
+--- a/openpilot/selfdrive/carrot/cluster/cluster_navi.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_navi.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
+-import math
++import json
++import math
+ import time
+ from dataclasses import replace
+@@ -321,5 +322,20 @@
+             )
+ 
+-    state = NaviLiveState(
++    exit_name, exit_deadline = "", 0.0
++    exit_info = _get(data, "amapExitInfo")
++    if status is not None and status.guidance_active and not status.off_route and bool(_get(exit_info, "valid", False)):
++        deadline = _int(exit_info, "deadlineMonoTimeNanos") / 1e9
++        raw = _text(exit_info, "fieldsJson")
++        if 0 < deadline - now <= 2.0 and 0 < len(raw) <= 16000:
++            try:
++                fields = json.loads(raw)
++                candidate = fields.get("EXIT_NAME_INFO") if isinstance(fields, dict) else None
++                if isinstance(candidate, str) and candidate.strip() and len(candidate) <= 160 and all(
++                    ord(c) >= 32 and ord(c) != 127 and not 0xd800 <= ord(c) <= 0xdfff for c in candidate
++                ):
++                    exit_name, exit_deadline = candidate.strip(), deadline
++            except (ValueError, TypeError, RecursionError):
++                pass
++    state = NaviLiveState(
+         generation=max(0, _int(data, "generation")),
+         session_id=session_id,
+@@ -345,7 +361,9 @@
+         crossroad=crossroad,
+         route=route,
+-        status=status,
+-    )
+-    return fresh_carrot_navi(state, now)[0]
++        status=status,
++        amap_exit_name=exit_name,
++        amap_exit_deadline_s=exit_deadline,
++    )
++    return fresh_carrot_navi(state, now)[0]
+ 
+ 
+@@ -377,5 +395,9 @@
+     crossroad = fresh(state.crossroad, LIVE_TTL_S)
+     route = fresh(state.route, ROUTE_TTL_S)
+-    status = fresh(state.status, STATUS_TTL_S)
++    status = fresh(state.status, STATUS_TTL_S)
++    show_exit = bool(state.amap_exit_name and current is not None and status is not None and
++                     status.guidance_active and not status.off_route and 0 < state.amap_exit_deadline_s - now <= 2.0)
++    if show_exit:
++        deadlines.append(state.amap_exit_deadline_s)
+ 
+     if not any((vehicle, current, next_guidance, lane_current, lane_ahead, speed, traffic, crossroad, route, status)):
+@@ -392,5 +414,7 @@
+         crossroad=crossroad,
+         route=route,
+-        status=status,
+-    )
+-    return effective, min(deadlines, default=math.inf)
++        status=status,
++        amap_exit_name=state.amap_exit_name if show_exit else "",
++        amap_exit_deadline_s=state.amap_exit_deadline_s if show_exit else 0.0,
++    )
++    return effective, min(deadlines, default=math.inf)
+diff --git a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+--- a/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
++++ b/openpilot/selfdrive/carrot/cluster/cluster_renderer.py
+@@ -4566,5 +4566,8 @@
+         current = navi.current if navi is not None else None
+         next_guidance = navi.next if navi is not None else None
+-        self._draw_text(self._text("navigation"), x, 14.0, 16.0, theme.muted)
++        nav_heading = self._text("navigation")
++        if navi is not None and getattr(navi, "amap_exit_name", "") and 0 < getattr(navi, "amap_exit_deadline_s", 0.0) - time.monotonic() <= 2.0:
++            nav_heading += " · " + navi.amap_exit_name
++        self._draw_text(self._ellipsize_text(nav_heading, 16.0, width), x, 14.0, 16.0, theme.muted)
+         if current is not None:
+             current_text = current.main_text or current.road_name or current.near_direction
+diff --git a/tools/jetlink/hud.py b/tools/jetlink/hud.py
+--- a/tools/jetlink/hud.py
++++ b/tools/jetlink/hud.py
+@@ -135,5 +135,14 @@
+           if meta.present and meta.receivedMonoTimeNanos > 0:
+             meta.receivedMonoTimeNanos = max(1, meta.receivedMonoTimeNanos + offset_ns)
+-      self.generations[name] = mono
++        info = navi.amapExitInfo
++        if info.valid:
++          deadline = int(info.deadlineMonoTimeNanos) + offset_ns
++          if 0 < deadline <= (1 << 64) - 1:
++            info.deadlineMonoTimeNanos = deadline
++          else:
++            info.valid = False
++            info.deadlineMonoTimeNanos = 0
++            info.fieldsJson = ''
++      self.generations[name] = mono
+       self.updated[name] = True
+ 
