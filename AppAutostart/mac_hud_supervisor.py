@@ -9,7 +9,38 @@ import sys
 import time
 
 
+def group_absent(pgid):
+  """On EPERM, verify absence rather than treating it as ESRCH."""
+  try:
+    result = subprocess.run(['ps', '-axo', 'pgid='], check=True, capture_output=True,
+                            text=True, timeout=2.)
+    groups = {int(value) for value in result.stdout.split()}
+    return bool(groups) and pgid not in groups
+  except (OSError, ValueError, subprocess.SubprocessError):
+    return False
+
+
 def terminate_group(child, grace=2.):
+  try:
+    _terminate_group(child, grace)
+    return True
+  except PermissionError:
+    # Darwin may deny signalling a group after the leader exits. Reap the
+    # owned child and check the process table before allowing another helper.
+    if child.poll() is None:
+      try:
+        child.terminate()
+        child.wait(timeout=grace)
+      except (OSError, subprocess.SubprocessError):
+        pass
+    if child.poll() is not None and group_absent(child.pid):
+      return True
+    print('Carrot HUD cleanup permission denied; group not proven gone. '
+          'Stopping automatic HUD restart; inspect the old helper before relaunch.', flush=True)
+    return False
+
+
+def _terminate_group(child, grace):
   # ffmpeg and decoder children inherit this group. A helper that already
   # exited can still leave descendants, so kill the group regardless of poll.
   try:
@@ -52,9 +83,12 @@ def supervise(command, parent_pid, directory, retry=2.):
       while child.poll() is None and not stopped and os.getppid() == parent_pid:
         time.sleep(.1)
       code = child.poll()
-      terminate_group(child)
+      cleaned = terminate_group(child)
       child = None
       (directory / 'status.json').unlink(missing_ok=True)
+      if not cleaned:
+        # The App treats 75 as non-retryable: do not spawn a second owner.
+        return 75
       if stopped or os.getppid() != parent_pid:
         break
       # Normal ignition-off/window close also needs a new waiting helper.
