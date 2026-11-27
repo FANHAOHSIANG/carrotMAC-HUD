@@ -40,3 +40,11 @@ Tony lat2v 使用不同微調 checkpoint 和 AMD 專用 FP8/INT4 cache；不能�
 - https://huggingface.co/Safman/Alpamayo2-Edge-MLX-q4
 - https://github.com/TonyBinheWu/sunnypilot/tree/980a186d4b63d6f0a62ab2b487dbdfe3f2939127/openpilot/selfdrive/alpamayo
 - https://huggingface.co/karelnagel/alpamayo2-edge-lat2v/tree/34c8c070b1557c8df79ebf3688ed0ff840f339a0
+
+## 一鍵啟動（候選版）
+
+停車、退出 Jetlink/HUD 並拔除 C4 後，在分支根目錄執行：
+
+    bash tools/alpamayo-mlx/Run-Alpamayo-Offline.command
+
+也可以將完整本機 segment 路徑作為第一個參數。工具建立獨立 venv，執行單元測試、匯出雙鏡頭資料並進行 Q4 推論，結果留在 ~/Library/Application Support/CarrotMacHUD/Alpamayo-MLX-Offline/run.*。未驗證實體 Mac；首次下載模型與來源需要網路。
