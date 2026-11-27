@@ -1,8 +1,8 @@
 {
   "schema": 2,
-  "jetlink_revision": "7dce2fbaff257795ffefab481a75d67cbdeb08d2",
+  "jetlink_revision": "4e9a8dd6dcc6ba64ac42712f87e116826114db20",
   "carrot_revision": "a564ce1dc082909b1fdc73b72e64d920336b34d6",
   "protocol": 3,
   "comma_revision": "034581414fa57fb20738a47238d1f8b266fa38d3",
-  "jetlink_version": "0.10.1"
+  "jetlink_version": "0.10.2"
 }
