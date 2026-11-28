@@ -23,6 +23,11 @@ jobs:
           git -C /tmp/carrot fetch --depth 1 https://github.com/ajouatom/openpilot.git a564ce1dc082909b1fdc73b72e64d920336b34d6
           git -C /tmp/carrot checkout --detach FETCH_HEAD
           git -C /tmp/carrot apply "$root/v1/carrot-mac-helper.patch"
+          # Exercise the bare installed helper before the optional exit/clock overlays.
+          python scripts/apply_lane_candidate.py /tmp/carrot
+          python scripts/check_lane_candidate.py /tmp/carrot
+          python scripts/apply_lane_candidate.py /tmp/carrot
+          python scripts/apply_lane_candidate.py /tmp/carrot --rollback
           python - <<'PY'
           import sys
           from pathlib import Path
