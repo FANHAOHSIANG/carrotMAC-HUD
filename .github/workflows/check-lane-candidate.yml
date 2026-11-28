@@ -26,6 +26,10 @@ jobs:
           # Exercise the bare installed helper before the optional exit/clock overlays.
           python scripts/apply_lane_candidate.py /tmp/carrot
           python scripts/check_lane_candidate.py /tmp/carrot
+          python scripts/apply_lane_strip.py /tmp/carrot
+          python scripts/check_lane_candidate.py /tmp/carrot
+          python scripts/apply_lane_strip.py /tmp/carrot
+          python scripts/apply_lane_strip.py /tmp/carrot --rollback
           python scripts/apply_lane_candidate.py /tmp/carrot
           python scripts/apply_lane_candidate.py /tmp/carrot --rollback
           python - <<'PY'
@@ -39,6 +43,10 @@ jobs:
           PY
           python scripts/apply_lane_candidate.py /tmp/carrot
           python scripts/check_lane_candidate.py /tmp/carrot
+          python scripts/apply_lane_strip.py /tmp/carrot
+          python scripts/check_lane_candidate.py /tmp/carrot
+          python scripts/apply_lane_strip.py /tmp/carrot
+          python scripts/apply_lane_strip.py /tmp/carrot --rollback
           python scripts/apply_lane_candidate.py /tmp/carrot
           python scripts/apply_lane_candidate.py /tmp/carrot --rollback
           python scripts/check_amap_exit_display.py /tmp/carrot
