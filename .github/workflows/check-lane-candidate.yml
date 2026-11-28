@@ -1,0 +1,39 @@
+name: Mac lane candidate HUD compatibility
+on:
+  push:
+    branches: [test/amap-live-lane-hud-20261128]
+permissions:
+  contents: read
+jobs:
+  overlay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pycapnp==2.1.0
+      - run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE"
+          git init /tmp/carrot
+          git -C /tmp/carrot fetch --depth 1 https://github.com/ajouatom/openpilot.git a564ce1dc082909b1fdc73b72e64d920336b34d6
+          git -C /tmp/carrot checkout --detach FETCH_HEAD
+          git -C /tmp/carrot apply "$root/v1/carrot-mac-helper.patch"
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from update_hud_locale import apply_hud_patches
+          p=Path.cwd()/"overlays/protocol3"
+          patches=tuple(p/name for name in ("carrot-hud-zh-tw.patch","carrot-hud-gear.patch","carrot-hud-nav-clock.patch","carrot-hud-amap-exit.patch","carrot-hud-nav-alerts.patch","carrot-hud-alert-placement.patch"))
+          apply_hud_patches(Path("/tmp/carrot"), patches, False)
+          PY
+          python scripts/apply_lane_candidate.py /tmp/carrot
+          python scripts/check_lane_candidate.py /tmp/carrot
+          python scripts/apply_lane_candidate.py /tmp/carrot
+          python scripts/apply_lane_candidate.py /tmp/carrot --rollback
+          python scripts/check_amap_exit_display.py /tmp/carrot
